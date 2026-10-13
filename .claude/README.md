@@ -4,7 +4,9 @@ Claude Code loads every folder in `.claude/skills/` as a project skill when it o
 
 Open `claude-cheatsheet.html` in a browser for the full cheatsheet: Claude Code commands, install commands, setup tips and workflows.
 
-These folders are unmodified copies of third-party repos (pulled 2026-10-13). Each keeps its original LICENSE. Nothing in `.claude/` is published to GitHub Pages, because Jekyll skips dot-folders.
+These folders are copies of third-party repos (pulled 2026-10-13). Each keeps its original LICENSE. Nothing in `.claude/` is published to GitHub Pages, because Jekyll skips dot-folders.
+
+One local change: in `ui-ux-pro-max/SKILL.md`, the search commands use `${CLAUDE_SKILL_DIR}/scripts/search.py` instead of upstream's `${CLAUDE_PLUGIN_ROOT}/.claude/skills/ui-ux-pro-max/scripts/search.py`. Upstream wrote that file for plugin installs, and Claude Code only fills in `${CLAUDE_PLUGIN_ROOT}` for plugins. Keep this change if you update the folder. Every other file matches upstream.
 
 | Skill (`/name`) | Source | Commit | License |
 | --- | --- | --- | --- |
@@ -26,7 +28,8 @@ Setup some skills need:
 
 - `playwright-cli`: `npm install -g @playwright/cli@latest`
 - `ui-ux-pro-max`: Python 3
-- `img2threejs`: Python 3.10+ (see its `forge/requirements.txt`)
+- `skill-creator`: Python 3 and PyYAML (`pip install pyyaml`) for its validate and package scripts
+- `img2threejs`: Python 3.10+ (see its `forge/requirements.txt`). Its optional character tools (`scripts/character_audit.sh`, `integrations/glb_character_pipeline/`) have known upstream bugs, so stick to the main `/img2threejs` image-to-model flow.
 
 ## Plugins (install inside Claude Code)
 
