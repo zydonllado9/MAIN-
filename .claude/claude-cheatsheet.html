@@ -1,0 +1,827 @@
+<title>Claude Toolkit Cheatsheet</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@100..125,400..800&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a printed quick-reference card. Sticky filter bar, then dense multi-column groups; commands set as keycaps/mono chips. */
+:root {
+  --bg: #f2f3ef;
+  --surface: #ffffff;
+  --ink: #1a1e1c;
+  --muted: #59625d;
+  --rule: #d8dcd5;
+  --accent: #0d6b58;
+  --accent-soft: #dcefe8;
+  --new: #a24c08;
+  --new-soft: #fae8d4;
+  --chip: #eaece7;
+  --font-display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --font-body: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --step--1: 0.8125rem;
+  --step-0: 0.9375rem;
+  --step-1: 1.125rem;
+  --step-2: 1.5rem;
+  --step-3: clamp(1.9rem, 4.5vw, 2.8rem);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111412; --surface: #191d1b; --ink: #e5e8e3; --muted: #9aa39d; --rule: #2b312e;
+    --accent: #5cc8ad; --accent-soft: #173a31; --new: #f0a45b; --new-soft: #3a2616; --chip: #232826;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111412; --surface: #191d1b; --ink: #e5e8e3; --muted: #9aa39d; --rule: #2b312e;
+  --accent: #5cc8ad; --accent-soft: #173a31; --new: #f0a45b; --new-soft: #3a2616; --chip: #232826;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: var(--step-0); line-height: 1.5; }
+.wrap { max-width: 1240px; margin: 0 auto; padding-inline: 16px; padding-block: 28px 64px; }
+@media (min-width: 720px) { .wrap { padding-inline: 32px; } }
+a { color: var(--accent); text-underline-offset: 2px; }
+a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+code, kbd, .mono { font-family: var(--font-mono); font-size: 0.86em; }
+
+header.top { display: grid; gap: 10px; padding-bottom: 18px; border-bottom: 2px solid var(--ink); }
+.eyebrow { font-family: var(--font-mono); font-size: var(--step--1); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+h1 { font-family: var(--font-display); font-stretch: 118%; font-weight: 800; font-size: var(--step-3); line-height: 1.02; margin: 0; text-wrap: balance; letter-spacing: -0.01em; }
+.lede { max-width: 68ch; margin: 0; color: var(--muted); font-size: var(--step-1); }
+
+.bar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; padding-block: 12px; border-bottom: 1px solid var(--rule); }
+.bar nav { display: flex; flex-wrap: wrap; gap: 6px; }
+.bar nav a { font-size: var(--step--1); font-weight: 600; text-decoration: none; color: var(--ink); padding: 4px 10px; border: 1px solid var(--rule); border-radius: 999px; background: var(--surface); }
+.bar nav a:hover { border-color: var(--accent); color: var(--accent); }
+.search { flex: 1 1 220px; display: flex; gap: 8px; align-items: center; min-width: 0; }
+.search input { width: 100%; min-width: 0; font: inherit; font-size: var(--step-0); padding: 7px 12px; border: 1px solid var(--rule); border-radius: 8px; background: var(--surface); color: var(--ink); }
+.search .count { font-family: var(--font-mono); font-size: var(--step--1); color: var(--muted); white-space: nowrap; }
+
+section.block { padding-top: 34px; scroll-margin-top: 70px; }
+.block > h2 { font-family: var(--font-display); font-stretch: 112%; font-weight: 750; font-size: var(--step-2); margin: 0 0 4px; display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+.block > h2 .src { font-family: var(--font-mono); font-size: var(--step--1); font-weight: 400; color: var(--muted); }
+.note { max-width: 78ch; color: var(--muted); margin: 0 0 16px; }
+
+.cols { columns: 290px; column-gap: 22px; }
+.group { break-inside: avoid; margin: 0 0 18px; padding: 12px 14px 10px; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; }
+.group h3 { margin: 0 0 6px; font-family: var(--font-mono); font-size: 0.72rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
+.group h3 + h4, .group .row + h4 { margin-top: 10px; }
+.group h4 { margin: 0 0 4px; font-size: 0.7rem; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.row { display: grid; grid-template-columns: minmax(0, max-content) minmax(45%, 1fr); gap: 2px 10px; padding: 3px 0; border-top: 1px dashed var(--rule); align-items: baseline; }
+.group h3 + .row, .group h4 + .row { border-top: 0; }
+.row > :first-child { font-family: var(--font-mono); font-size: 0.8rem; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.row > :last-child { font-size: 0.86rem; color: var(--ink); min-width: 0; }
+kbd { display: inline-block; padding: 0 5px; border: 1px solid var(--rule); border-bottom-width: 2px; border-radius: 4px; background: var(--chip); font-weight: 600; font-size: 0.76rem; line-height: 1.5; }
+.new { font-family: var(--font-mono); font-size: 0.62rem; font-weight: 600; letter-spacing: 0.06em; padding: 0 4px; border-radius: 3px; color: var(--new); background: var(--new-soft); vertical-align: 1px; margin-left: 4px; }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 14px; }
+.card { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 14px 16px; display: grid; gap: 8px; align-content: start; min-width: 0; }
+.card h3 { margin: 0; font-family: var(--font-display); font-stretch: 108%; font-size: var(--step-1); font-weight: 700; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.card .by { font-size: var(--step--1); color: var(--muted); font-weight: 400; font-stretch: 100%; }
+.card p { margin: 0; font-size: 0.9rem; }
+.meta { display: flex; flex-wrap: wrap; gap: 6px; }
+.pill { font-family: var(--font-mono); font-size: 0.68rem; font-weight: 600; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--rule); color: var(--muted); }
+.pill.in { color: var(--accent); background: var(--accent-soft); border-color: transparent; }
+.pill.inst { color: var(--new); background: var(--new-soft); border-color: transparent; }
+.cmd { display: flex; gap: 6px; align-items: stretch; min-width: 0; }
+.cmd code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; padding: 6px 9px; background: var(--chip); border-radius: 5px; font-size: 0.78rem; }
+.cmd button { font: 600 0.72rem var(--font-mono); padding: 0 9px; border: 1px solid var(--rule); border-radius: 5px; background: var(--surface); color: var(--ink); cursor: pointer; }
+.cmd button:hover { border-color: var(--accent); color: var(--accent); }
+.cmds { display: grid; gap: 6px; }
+
+.steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 14px; }
+ol.flow { margin: 0; padding-left: 1.3em; display: grid; gap: 6px; font-size: 0.9rem; }
+ol.flow li::marker { font-family: var(--font-mono); color: var(--accent); font-weight: 600; }
+ul.tight { margin: 0; padding-left: 1.1em; display: grid; gap: 4px; font-size: 0.9rem; }
+blockquote.prompt { margin: 0; padding: 10px 12px; border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 0 6px 6px 0; font-size: 0.9rem; }
+
+.codes { columns: 230px; column-gap: 20px; }
+.codes .group { padding: 10px 12px 8px; }
+.codes .row > :first-child { font-weight: 600; color: var(--accent); }
+.codes .row > :first-child small { color: var(--muted); font-weight: 400; margin-right: 4px; }
+details.more { margin-top: 14px; }
+details.more > summary { cursor: pointer; font-weight: 700; padding: 8px 0; }
+.callout { display: grid; gap: 4px; padding: 12px 14px; border: 1px solid var(--rule); border-left: 4px solid var(--new); background: var(--surface); border-radius: 6px; max-width: 80ch; margin-bottom: 16px; font-size: 0.9rem; }
+
+table.src { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+.tablewrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; }
+table.src th, table.src td { text-align: left; padding: 7px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+table.src th { font-family: var(--font-mono); font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+table.src tr:last-child td { border-bottom: 0; }
+td.num { font-variant-numeric: tabular-nums; font-family: var(--font-mono); }
+.empty { display: none; padding: 20px 0; color: var(--muted); }
+.empty.show { display: block; }
+.is-hidden { display: none !important; }
+footer { margin-top: 40px; padding-top: 14px; border-top: 1px solid var(--rule); color: var(--muted); font-size: var(--step--1); }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; } }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="eyebrow">From 8 TikToks · Oct 2026</div>
+    <h1>Claude Toolkit Cheatsheet</h1>
+    <p class="lede">Everything shown in the eight videos you sent: the two-page Claude Code command sheet, the skills and plugins with install commands, the setup tips, and the workflows. 13 of the skills are already in <code>volt-3d-website/.claude/skills/</code>.</p>
+  </header>
+
+  <div class="bar">
+    <nav aria-label="Sections">
+      <a href="#commands">Commands</a>
+      <a href="#skills">Skills &amp; plugins</a>
+      <a href="#setup">Setup tips</a>
+      <a href="#workflows">Workflows</a>
+      <a href="#codes">Prompt codes</a>
+      <a href="#sources">Sources</a>
+    </nav>
+    <label class="search" for="filter">
+      <input id="filter" type="search" placeholder="Filter: worktree, /compact, design, mcp…" autocomplete="off">
+      <span class="count" id="count" aria-live="polite"></span>
+    </label>
+  </div>
+  <p class="empty" id="empty">Nothing matches that filter. Try a shorter word, like <code>mcp</code> or <code>plan</code>.</p>
+
+  <!-- ===================== CLAUDE CODE COMMANDS ===================== -->
+  <section class="block" id="commands">
+    <h2>Claude Code commands <span class="src">video 4 · @imjonathanacuna · Simple Tech Skills sheet, pages 1–2</span></h2>
+    <p class="note">Transcribed from the printed sheet in the video. <span class="new">NEW</span> marks what the sheet flagged as new when it was made (spring 2026). A few columns were partly off camera; only the entries that were readable are listed.</p>
+
+    <div class="cols">
+      <div class="group">
+        <h3>Keyboard · general</h3>
+        <div class="row"><span><kbd>Ctrl C</kbd></span><span>Cancel input / generation</span></div>
+        <div class="row"><span><kbd>Ctrl D</kbd></span><span>Exit session</span></div>
+        <div class="row"><span><kbd>Ctrl L</kbd></span><span>Redraw screen</span></div>
+        <div class="row"><span><kbd>Ctrl O</kbd></span><span>Toggle verbose / transcript</span></div>
+        <div class="row"><span><kbd>Ctrl R</kbd></span><span>Reverse search history</span></div>
+        <div class="row"><span><kbd>Ctrl G</kbd></span><span>Open prompt in editor</span></div>
+        <div class="row"><span><kbd>Ctrl X</kbd> <kbd>E</kbd></span><span>Open in editor (alias)</span></div>
+        <div class="row"><span><kbd>Ctrl B</kbd></span><span>Background the running task</span></div>
+        <div class="row"><span><kbd>Ctrl T</kbd></span><span>Toggle task list</span></div>
+        <div class="row"><span><kbd>Ctrl V</kbd></span><span>Paste image chip</span></div>
+        <div class="row"><span><kbd>Ctrl X</kbd> <kbd>K</kbd></span><span>Kill background agents</span></div>
+        <div class="row"><span><kbd>Esc</kbd> <kbd>Esc</kbd></span><span>Rewind or summarize</span></div>
+      </div>
+
+      <div class="group">
+        <h3>Keyboard · modes &amp; input</h3>
+        <h4>Mode switching</h4>
+        <div class="row"><span><kbd>Shift Tab</kbd></span><span>Cycle permission modes</span></div>
+        <div class="row"><span><kbd>Alt P</kbd></span><span>Switch model</span></div>
+        <div class="row"><span><kbd>Alt T</kbd></span><span>Toggle thinking</span></div>
+        <div class="row"><span><kbd>Alt O</kbd></span><span>Toggle fast mode</span></div>
+        <h4>Input &amp; prefixes</h4>
+        <div class="row"><span><kbd>\ Enter</kbd> / <kbd>Ctrl J</kbd></span><span>New line</span></div>
+        <div class="row"><span>/</span><span>Slash command</span></div>
+        <div class="row"><span>!</span><span>Run a bash command directly</span></div>
+        <div class="row"><span>@</span><span>Mention a file, with autocomplete</span></div>
+        <h4>Session picker</h4>
+        <div class="row"><span><kbd>Up</kbd> / <kbd>Down</kbd></span><span>Navigate sessions</span></div>
+        <div class="row"><span><kbd>Left</kbd> / <kbd>Right</kbd></span><span>Expand / collapse</span></div>
+        <div class="row"><span><kbd>P</kbd> <kbd>R</kbd> <kbd>/</kbd></span><span>Preview · Rename · Search</span></div>
+        <div class="row"><span><kbd>A</kbd> <kbd>B</kbd></span><span>All projects · Current branch</span></div>
+        <h4>Transcript mode (Ctrl+O)</h4>
+        <div class="row"><span><kbd>Ctrl E</kbd></span><span>Toggle show all</span></div>
+        <div class="row"><span><kbd>Q</kbd> / <kbd>Esc</kbd></span><span>Exit transcript</span></div>
+      </div>
+
+      <div class="group">
+        <h3>Slash · session</h3>
+        <div class="row"><code>/clear</code><span>Clear conversation</span></div>
+        <div class="row"><code>/compact [focus]</code><span>Compact context</span></div>
+        <div class="row"><code>/resume</code><span>Resume / switch session</span></div>
+        <div class="row"><code>/rename [name]</code><span>Name current session</span></div>
+        <div class="row"><code>/branch [name]</code><span>Branch conversation</span></div>
+        <div class="row"><code>/cost</code><span>Token usage + cache breakdown <span class="new">NEW</span></span></div>
+        <div class="row"><code>/context</code><span>Visualize context grid</span></div>
+        <div class="row"><code>/diff</code><span>Interactive diff viewer</span></div>
+        <div class="row"><code>/copy [N]</code><span>Copy last (or Nth) response</span></div>
+        <div class="row"><code>/rewind</code><span>Rewind / code checkpoint</span></div>
+        <div class="row"><code>/export</code><span>Export conversation</span></div>
+      </div>
+
+      <div class="group">
+        <h3>Slash · config</h3>
+        <div class="row"><code>/config</code><span>Open settings</span></div>
+        <div class="row"><code>/model [model]</code><span>Switch model</span></div>
+        <div class="row"><code>/fast [on|off]</code><span>Toggle fast mode</span></div>
+        <div class="row"><code>/theme</code><span>Change color theme</span></div>
+        <div class="row"><code>/permissions</code><span>View / update permissions</span></div>
+        <div class="row"><code>/effort [level]</code><span>low / med / high / max / auto</span></div>
+        <div class="row"><code>/keybindings</code><span>Customize shortcuts</span></div>
+        <div class="row"><code>/terminal-setup</code><span>Configure terminal</span></div>
+      </div>
+
+      <div class="group">
+        <h3>Slash · tools</h3>
+        <div class="row"><code>/init</code><span>Create CLAUDE.md</span></div>
+        <div class="row"><code>/memory</code><span>Edit CLAUDE.md files</span></div>
+        <div class="row"><code>/mcp</code><span>Manage MCP servers</span></div>
+        <div class="row"><code>/hooks</code><span>Manage hooks</span></div>
+        <div class="row"><code>/skills</code><span>List available skills</span></div>
+        <div class="row"><code>/agents</code><span>Manage agents</span></div>
+        <div class="row"><code>/chrome</code><span>Chrome integration</span></div>
+        <div class="row"><code>/add-dir &lt;path&gt;</code><span>Add a working directory</span></div>
+      </div>
+
+      <div class="group">
+        <h3>Slash · special</h3>
+        <div class="row"><code>/powerup</code><span>Interactive feature lessons <span class="new">NEW</span></span></div>
+        <div class="row"><code>/btw &lt;q&gt;</code><span>Side question, no context cost</span></div>
+        <div class="row"><code>/plan [desc]</code><span>Plan mode + auto-start</span></div>
+        <div class="row"><code>/loop [interval]</code><span>Schedule a recurring task</span></div>
+        <div class="row"><code>/voice</code><span>Push-to-talk (20 languages)</span></div>
+        <div class="row"><code>/doctor</code><span>Diagnose installation</span></div>
+        <div class="row"><code>/remote-control</code><span>Bridge to claude.ai/code <span class="new">NEW</span></span></div>
+        <div class="row"><code>/usage</code><span>Plan limits and rate status</span></div>
+        <div class="row"><code>/schedule</code><span>Cloud scheduled tasks</span></div>
+        <div class="row"><code>/security-review</code><span>Security analysis of changes</span></div>
+        <div class="row"><code>/feedback</code><span>Submit feedback (alias <code>/bug</code>)</span></div>
+        <div class="row"><code>/release-notes</code><span>Interactive version changelog</span></div>
+      </div>
+
+      <div class="group">
+        <h3>Workflow · plan, think, context</h3>
+        <h4>Plan mode</h4>
+        <div class="row"><span><kbd>Shift Tab</kbd></span><span>Normal → Auto-Accept → Plan</span></div>
+        <div class="row"><code>--permission-mode plan</code><span>Start in plan mode</span></div>
+        <h4>Thinking &amp; effort</h4>
+        <div class="row"><span><kbd>Alt T</kbd></span><span>Toggle thinking on / off</span></div>
+        <div class="row"><code>"ultrathink"</code><span>Max effort for the current turn</span></div>
+        <div class="row"><span><kbd>Ctrl O</kbd></span><span>See thinking in verbose mode</span></div>
+        <div class="row"><code>/effort</code><span>low / medium / high / max / auto</span></div>
+        <h4>Context management</h4>
+        <div class="row"><code>/context</code><span>Usage + optimization tips</span></div>
+        <div class="row"><code>/compact [focus]</code><span>Compress context with a focus</span></div>
+        <div class="row"><span>Auto-compact</span><span>Fires at ~95% capacity <span class="new">NEW</span></span></div>
+        <div class="row"><span>1M context</span><span>Opus 4.6 (Max / Team / Ent)</span></div>
+        <div class="row"><span>CLAUDE.md</span><span>Survives compaction</span></div>
+      </div>
+
+      <div class="group">
+        <h3>Workflow · worktrees &amp; sessions</h3>
+        <h4>Git worktrees</h4>
+        <div class="row"><code>--worktree name</code><span>Isolated branch per feature</span></div>
+        <div class="row"><code>isolation: worktree</code><span>Agent works in its own worktree</span></div>
+        <div class="row"><code>sparsePaths</code><span>Check out only the dirs you need</span></div>
+        <div class="row"><code>/batch</code><span>Auto-creates worktrees</span></div>
+        <h4>Session power moves</h4>
+        <div class="row"><code>claude -c</code><span>Continue last conversation</span></div>
+        <div class="row"><code>claude -r "name"</code><span>Resume by name</span></div>
+        <div class="row"><code>/btw question</code><span>Side question, no context cost</span></div>
+        <h4>Voice mode</h4>
+        <div class="row"><code>/voice</code><span>Enable push-to-talk</span></div>
+        <div class="row"><span><kbd>Space</kbd> (hold)</span><span>Record, release to send</span></div>
+        <div class="row"><span>20 languages</span><span>EN, ES, FR, DE and more</span></div>
+      </div>
+
+      <div class="group">
+        <h3>Workflow · headless &amp; remote</h3>
+        <h4>SDK / headless</h4>
+        <div class="row"><code>claude -p "query"</code><span>Non-interactive run</span></div>
+        <div class="row"><code>--output-format json</code><span>Structured output</span></div>
+        <div class="row"><code>--max-budget-usd 5</code><span>Cost cap</span></div>
+        <div class="row"><code>cat file | claude -p</code><span>Pipe input</span></div>
+        <h4>Scheduling &amp; remote</h4>
+        <div class="row"><code>/loop 5m msg</code><span>Recurring task</span></div>
+        <div class="row"><code>/rc</code><span>Remote control bridge <span class="new">NEW</span></span></div>
+        <div class="row"><code>--remote</code><span>Web session on claude.ai</span></div>
+        <h4>Auto mode denied</h4>
+        <div class="row"><code>/permissions → Recent</code><span>Retry a denied action with <kbd>R</kbd> <span class="new">NEW</span></span></div>
+      </div>
+
+      <div class="group">
+        <h3>MCP servers</h3>
+        <h4>Add servers</h4>
+        <div class="row"><code>--transport http</code><span>Remote HTTP server (recommended)</span></div>
+        <div class="row"><code>--transport stdio</code><span>Local process</span></div>
+        <div class="row"><code>--transport sse</code><span>Remote SSE server</span></div>
+        <h4>Scopes</h4>
+        <div class="row"><span>Local</span><span><code>~/.claude.json</code>, this project, just you</span></div>
+        <div class="row"><span>Project</span><span><code>.mcp.json</code>, shared through git</span></div>
+        <div class="row"><span>User</span><span><code>~/.claude.json</code>, all your projects</span></div>
+        <h4>Manage</h4>
+        <div class="row"><code>/mcp</code><span>Interactive menu</span></div>
+        <div class="row"><code>claude mcp list</code><span>List servers</span></div>
+        <div class="row"><code>claude mcp serve</code><span>Run Claude Code as an MCP server</span></div>
+        <div class="row"><code>maxResultSizeChars</code><span>Override for large tool results <span class="new">NEW</span></span></div>
+      </div>
+
+      <div class="group">
+        <h3>Memory &amp; files</h3>
+        <h4>CLAUDE.md locations</h4>
+        <div class="row"><code>./CLAUDE.md</code><span>Project, shared with the team</span></div>
+        <div class="row"><code>~/.claude/CLAUDE.md</code><span>Personal, all projects</span></div>
+        <div class="row"><code>/etc/claude-code/…</code><span>Managed, org-wide</span></div>
+        <h4>Rules &amp; import</h4>
+        <div class="row"><code>.claude/rules/*.md</code><span>Project rules</span></div>
+        <div class="row"><code>~/.claude/rules/*.md</code><span>Personal rules</span></div>
+        <div class="row"><code>paths:</code><span>Frontmatter for path-specific rules</span></div>
+        <div class="row"><code>@path/to/file</code><span>Import a file into CLAUDE.md</span></div>
+        <h4>Auto memory</h4>
+        <div class="row"><code>~/.claude/projects/&lt;p&gt;/memory/</code><span>Where it lives</span></div>
+        <div class="row"><code>MEMORY.md</code><span>Index + topic files</span></div>
+        <div class="row"><span>Max</span><span>25 KB / 200 lines loaded</span></div>
+      </div>
+
+      <div class="group">
+        <h3>Permission modes</h3>
+        <div class="row"><code>default</code><span>Prompts for each action</span></div>
+        <div class="row"><code>acceptEdits</code><span>Auto-accept file edits</span></div>
+        <div class="row"><code>plan</code><span>Read-only, no changes</span></div>
+        <div class="row"><code>dontAsk</code><span>Deny unless allowed</span></div>
+        <div class="row"><code>bypassPermissions</code><span>Skip all checks</span></div>
+        <div class="row"><code>--dangerously-skip-permissions</code><span>CLI flag: skip all prompts</span></div>
+      </div>
+
+      <div class="group">
+        <h3>Skills (page 2)</h3>
+        <h4>Built-in skills</h4>
+        <div class="row"><code>/simplify</code><span>Code review (3 parallel agents)</span></div>
+        <div class="row"><code>/batch</code><span>Parallel changes (5–30 worktrees)</span></div>
+        <div class="row"><code>/debug [desc]</code><span>Troubleshoot from debug log</span></div>
+        <div class="row"><code>/loop [interval]</code><span>Recurring scheduled task</span></div>
+        <div class="row"><code>/claude-api</code><span>Load API + SDK reference</span></div>
+        <h4>Custom skill locations</h4>
+        <div class="row"><code>.claude/skills/&lt;n&gt;/</code><span>Project skills</span></div>
+        <div class="row"><code>~/.claude/skills/&lt;n&gt;/</code><span>Personal skills</span></div>
+        <h4>Skill frontmatter</h4>
+        <div class="row"><code>description</code><span>Auto-invocation trigger</span></div>
+        <div class="row"><code>allowed-tools</code><span>Skip permission prompts</span></div>
+        <div class="row"><code>model</code><span>Override model for the skill</span></div>
+        <div class="row"><code>effort</code><span>Override effort level</span></div>
+        <div class="row"><code>paths: [globs]</code><span>Path-specific (YAML list)</span></div>
+        <div class="row"><code>context: fork</code><span>Run in a subagent</span></div>
+        <div class="row"><code>$ARGUMENTS</code><span>User input placeholder</span></div>
+        <div class="row"><code>${CLAUDE_SKILL_DIR}</code><span>The skill's own directory</span></div>
+        <div class="row"><code>!`cmd`</code><span>Dynamic context injection</span></div>
+        <div class="row"><code>plugin bin/</code><span>Ship executables for the Bash tool</span></div>
+      </div>
+
+      <div class="group">
+        <h3>Agents (page 2)</h3>
+        <h4>Built-in agents</h4>
+        <div class="row"><span>Explore</span><span>Fast, read-only (Haiku)</span></div>
+        <div class="row"><span>Plan</span><span>Read-only research for plan mode</span></div>
+        <div class="row"><span>General</span><span>Full tools, complex tasks</span></div>
+        <div class="row"><span>Bash</span><span>Terminal, separate context</span></div>
+        <h4>Agent frontmatter</h4>
+        <div class="row"><code>permissionMode</code><span>default / acceptEdits / plan / dontAsk</span></div>
+        <div class="row"><code>isolation: worktree</code><span>Run in a git worktree</span></div>
+        <div class="row"><code>memory:</code><span>user | project | local</span></div>
+        <div class="row"><code>background: true</code><span>Background task</span></div>
+        <div class="row"><code>maxTurns</code><span>Limit agentic turns</span></div>
+        <div class="row"><code>initialPrompt</code><span>Auto-submit the first turn</span></div>
+        <div class="row"><code>SendMessage</code><span>Resume agents (replaces resume)</span></div>
+        <div class="row"><code>@agent-name</code><span>Mention named subagents <span class="new">NEW</span></span></div>
+      </div>
+
+      <div class="group">
+        <h3>Config &amp; env (page 2)</h3>
+        <h4>Config files</h4>
+        <div class="row"><code>~/.claude/settings.json</code><span>User settings</span></div>
+        <div class="row"><code>.claude/settings.json</code><span>Project, shared</span></div>
+        <div class="row"><code>.claude/settings.local.json</code><span>Project, just you</span></div>
+        <div class="row"><code>~/.claude.json</code><span>App state, login, MCP</span></div>
+        <div class="row"><code>.mcp.json</code><span>Project MCP servers</span></div>
+        <div class="row"><code>managed-settings.d/</code><span>Policy fragments</span></div>
+        <h4>Key settings</h4>
+        <div class="row"><code>modelOverrides</code><span>Map model IDs</span></div>
+        <div class="row"><code>autoMemoryDirectory</code><span>Custom memory folder</span></div>
+        <div class="row"><code>worktree.sparsePaths</code><span>Sparse checkout for worktrees</span></div>
+        <div class="row"><code>sandbox.failIfUnavailable</code><span>Stop if the sandbox fails</span></div>
+        <div class="row"><code>hooks: if</code><span>Conditional hooks</span></div>
+        <div class="row"><code>PermissionDenied</code><span>Hook event <span class="new">NEW</span></span></div>
+        <div class="row"><code>showThinkingSummaries</code><span><span class="new">NEW</span></span></div>
+        <div class="row"><code>disableSkillShellExecution</code><span><span class="new">NEW</span></span></div>
+        <div class="row"><code>forceRemoteSettingsRefresh</code><span>At startup <span class="new">NEW</span></span></div>
+        <h4>Key env vars</h4>
+        <div class="row"><code>ANTHROPIC_API_KEY</code><span>API key</span></div>
+        <div class="row"><code>ANTHROPIC_MODEL</code><span>Default model</span></div>
+        <div class="row"><code>MAX_THINKING_TOKENS</code><span>Thinking budget</span></div>
+        <div class="row"><code>CLAUDE_CODE_SUBPROCESS_ENV_SCRUB</code><span>Strip credentials from subprocesses</span></div>
+        <div class="row"><code>CLAUDE_CODE_NO_FLICKER</code><span>Rendering (=1) <span class="new">NEW</span></span></div>
+        <div class="row"><code>MCP_CONNECTION_NONBLOCKING</code><span>Don't wait for MCP in <code>-p</code> mode <span class="new">NEW</span></span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== SKILLS & PLUGINS ===================== -->
+  <section class="block" id="skills">
+    <h2>Skills &amp; plugins <span class="src">videos 2, 3, 5, 8</span></h2>
+    <p class="note"><span class="pill in">In repo</span> means the skill is already in <code>volt-3d-website/.claude/skills/</code>. Claude Code picks it up when you open that repo, and you can call it with its <code>/name</code>. To use one in every project, copy its folder to <code>~/.claude/skills/</code>. <span class="pill inst">Install</span> means it's a plugin: paste the commands into Claude Code.</p>
+
+    <div class="cards">
+      <article class="card">
+        <h3>Skill Creator <span class="by">Anthropic</span></h3>
+        <div class="meta"><span class="pill in">In repo</span><span class="pill">video 2</span></div>
+        <p>Builds new skills, tests them with evals, and tunes their descriptions so they trigger reliably. Use it to turn any workflow you repeat into a skill.</p>
+        <div class="cmds"><div class="cmd"><code>/skill-creator</code><button type="button" data-copy>Copy</button></div></div>
+      </article>
+
+      <article class="card">
+        <h3>Stop Slop <span class="by">Hardik Pandya</span></h3>
+        <div class="meta"><span class="pill in">In repo</span><span class="pill">video 2</span></div>
+        <p>Strips AI writing tells: stock phrases, "it's not X, it's Y" structures, throat-clearing openers. Use it on any copy you write for the site or socials.</p>
+        <div class="cmds"><div class="cmd"><code>/stop-slop</code><button type="button" data-copy>Copy</button></div></div>
+      </article>
+
+      <article class="card">
+        <h3>UI UX Pro Max <span class="by">Next Level Builder</span></h3>
+        <div class="meta"><span class="pill in">In repo</span><span class="pill">video 2</span></div>
+        <p>A searchable design database (UI styles, palettes, font pairings, UX rules, chart types) plus scripts that generate a design system for your product. Needs Python 3.</p>
+        <div class="cmds"><div class="cmd"><code>/ui-ux-pro-max</code><button type="button" data-copy>Copy</button></div></div>
+      </article>
+
+      <article class="card">
+        <h3>Taste Skill <span class="by">Leonxlnx · tasteskill.dev</span></h3>
+        <div class="meta"><span class="pill in">In repo</span><span class="pill">videos 5, 8</span></div>
+        <p>Anti-slop frontend design: infers a design direction, then ships pages that don't look templated. Five style variants from the same repo are in the repo too: redesign, soft (high-end), minimalist, brutalist, and full-output.</p>
+        <div class="cmds">
+          <div class="cmd"><code>/design-taste-frontend</code><button type="button" data-copy>Copy</button></div>
+          <div class="cmd"><code>/redesign-existing-projects</code><button type="button" data-copy>Copy</button></div>
+        </div>
+      </article>
+
+      <article class="card">
+        <h3>Impeccable <span class="by">Paul Bakaus · impeccable.style</span></h3>
+        <div class="meta"><span class="pill in">In repo</span><span class="pill">videos 5, 8</span></div>
+        <p>Gives you designer vocabulary as commands: audit, critique, polish, typeset, animate, colorize, harden and more. Chain them: <code>/impeccable audit</code>, then <code>polish</code>. The full plugin adds a live in-browser editor and hooks.</p>
+        <div class="cmds">
+          <div class="cmd"><code>/impeccable critique landing page</code><button type="button" data-copy>Copy</button></div>
+          <div class="cmd"><code>/plugin marketplace add pbakaus/impeccable</code><button type="button" data-copy>Copy</button></div>
+        </div>
+      </article>
+
+      <article class="card">
+        <h3>Emil's design engineering <span class="by">Emil Kowalski · animations.dev</span></h3>
+        <div class="meta"><span class="pill in">In repo</span><span class="pill">video 8</span></div>
+        <p>Emil Kowalski's rules for UI polish and motion: easing, timing (UI animation under 300 ms), and the small details that make an interface feel good. Best used per task, not always on.</p>
+        <div class="cmds"><div class="cmd"><code>/emil-design-eng</code><button type="button" data-copy>Copy</button></div></div>
+      </article>
+
+      <article class="card">
+        <h3>Playwright CLI <span class="by">Microsoft</span></h3>
+        <div class="meta"><span class="pill in">In repo</span><span class="pill">video 5</span></div>
+        <p>Lets Claude open a real browser, click through your site, take screenshots and check its own work. Install the CLI once on your computer.</p>
+        <div class="cmds">
+          <div class="cmd"><code>npm install -g @playwright/cli@latest</code><button type="button" data-copy>Copy</button></div>
+        </div>
+      </article>
+
+      <article class="card">
+        <h3>img2threejs <span class="by">hoainho</span></h3>
+        <div class="meta"><span class="pill in">In repo</span><span class="pill">video 5</span></div>
+        <p>Rebuilds the object in a reference image as a procedural Three.js model written in code, then compares renders against the image. A good fit for the VOLT can scene. Needs Python 3.10+.</p>
+        <div class="cmds"><div class="cmd"><code>/img2threejs</code><button type="button" data-copy>Copy</button></div></div>
+      </article>
+
+      <article class="card">
+        <h3>Superpowers <span class="by">Jesse Vincent (obra)</span></h3>
+        <div class="meta"><span class="pill inst">Install</span><span class="pill">video 2</span></div>
+        <p>A full dev workflow: brainstorm → written plan → test-driven build with subagents → code review. It changes how every session runs, so install it where you want that discipline.</p>
+        <div class="cmds">
+          <div class="cmd"><code>/plugin install superpowers@claude-plugins-official</code><button type="button" data-copy>Copy</button></div>
+        </div>
+      </article>
+
+      <article class="card">
+        <h3>Marketing Skills <span class="by">Corey Haines</span></h3>
+        <div class="meta"><span class="pill inst">Install</span><span class="pill">video 2</span></div>
+        <p>About 50 marketing skills (copywriting, pricing, launch, referrals, churn, SEO, CRO) that all read one shared product-marketing context file first.</p>
+        <div class="cmds">
+          <div class="cmd"><code>/plugin marketplace add coreyhaines31/marketingskills</code><button type="button" data-copy>Copy</button></div>
+          <div class="cmd"><code>/plugin install marketing-skills@marketingskills</code><button type="button" data-copy>Copy</button></div>
+        </div>
+      </article>
+
+      <article class="card">
+        <h3>Ruflo <span class="by">ruvnet · formerly Claude Flow</span></h3>
+        <div class="meta"><span class="pill inst">Install</span><span class="pill">video 3</span></div>
+        <p>Multi-agent orchestration: a "queen" agent splits work across specialist agents, routes simple tasks to cheaper models, and adds vector memory. Large and opinionated. The cost and memory savings in the video are the author's claims.</p>
+        <div class="cmds">
+          <div class="cmd"><code>/plugin marketplace add ruvnet/ruflo</code><button type="button" data-copy>Copy</button></div>
+          <div class="cmd"><code>/plugin install ruflo-core@ruflo</code><button type="button" data-copy>Copy</button></div>
+          <div class="cmd"><code>claude mcp add ruflo -- npx ruflo@latest mcp start</code><button type="button" data-copy>Copy</button></div>
+        </div>
+      </article>
+
+      <article class="card">
+        <h3>Awesome DESIGN.md <span class="by">VoltAgent · getdesign.md</span></h3>
+        <div class="meta"><span class="pill">Reference</span><span class="pill">video 5</span></div>
+        <p>About 70 DESIGN.md files that describe real sites' design systems (Apple, Stripe, Linear, Vercel…). Drop one in your project root and tell Claude to follow it. These are reconstructions, not official brand files.</p>
+        <div class="cmds"><div class="cmd"><code>https://github.com/VoltAgent/awesome-design-md</code><button type="button" data-copy>Copy</button></div></div>
+      </article>
+    </div>
+  </section>
+
+  <!-- ===================== SETUP TIPS ===================== -->
+  <section class="block" id="setup">
+    <h2>3 things to set up in Claude today <span class="src">video 1 · @walidsadvice</span></h2>
+    <div class="steps">
+      <article class="card">
+        <h3>Turn on memory</h3>
+        <ol class="flow">
+          <li>claude.ai → Settings → Capabilities.</li>
+          <li>Turn on <b>Search and reference chats</b>.</li>
+          <li>Turn on <b>Generate memory from chat history</b>.</li>
+          <li>Optional: <b>Import memory</b> from another AI app.</li>
+        </ol>
+      </article>
+      <article class="card">
+        <h3>Connect 1,000+ apps with Composio</h3>
+        <ol class="flow">
+          <li>Sign up at <a href="https://composio.dev" target="_blank" rel="noopener">composio.dev</a> and copy the MCP URL.</li>
+          <li>Claude → Customize → Connectors → <b>Add custom connector</b>.</li>
+          <li>Name it Composio and paste the URL.</li>
+        </ol>
+        <div class="cmd"><code>https://connect.composio.dev/mcp</code><button type="button" data-copy>Copy</button></div>
+      </article>
+      <article class="card">
+        <h3>Learn from Anthropic's free courses</h3>
+        <ol class="flow">
+          <li>Open <a href="https://anthropic.skilljar.com" target="_blank" rel="noopener">anthropic.skilljar.com</a> (13 courses).</li>
+          <li>Paste the link into Claude with: "extract the best lessons from this".</li>
+        </ol>
+        <div class="cmd"><code>https://anthropic.skilljar.com/ extract the best lessons from this</code><button type="button" data-copy>Copy</button></div>
+      </article>
+    </div>
+  </section>
+
+  <!-- ===================== WORKFLOWS ===================== -->
+  <section class="block" id="workflows">
+    <h2>Workflows <span class="src">videos 7, 8, 3</span></h2>
+    <div class="steps">
+      <article class="card">
+        <h3>Motion-design studio <span class="by">video 7 · @ray_fu</span></h3>
+        <p>Claude doesn't render video. It writes code that paints every frame; Playwright screenshots each frame in Chrome; ffmpeg stitches the frames into an MP4.</p>
+        <blockquote class="prompt">Build a headless render engine loop. Write code that paints every frame, capture it in Chrome, stitch to MP4.</blockquote>
+        <ol class="flow">
+          <li>Install Node.js, ffmpeg, and Playwright with Chromium.</li>
+          <li>Give it real reference assets, or it defaults to centered text on a purple gradient in all caps.</li>
+          <li>Ban basic CSS (<code>transition: all .3s ease</code>). Make it use closed-form springs.</li>
+          <li>Lock cuts to the music: e.g. 120 BPM, cut every 2 beats.</li>
+          <li>Have Claude watch its own frames, hunt dead frames, and re-render until every scene grades 8/10.</li>
+        </ol>
+        <div class="cmd"><code>ffmpeg -framerate 30 -i frame_%04d.png -c:v libx264 out.mp4</code><button type="button" data-copy>Copy</button></div>
+      </article>
+
+      <article class="card">
+        <h3>Design stack for this site <span class="by">videos 5 &amp; 8</span></h3>
+        <ol class="flow">
+          <li><code>/impeccable audit</code> the current page, then <code>/impeccable polish</code>.</li>
+          <li><code>/redesign-existing-projects</code> for a bigger upgrade that keeps the code working.</li>
+          <li><code>/emil-design-eng</code> when you tune hover, easing and motion.</li>
+          <li>Ask Claude to check its work in a browser with <code>playwright-cli</code> and take screenshots.</li>
+          <li>Use <code>/img2threejs</code> with a product photo to build a 3D model in code.</li>
+        </ol>
+        <p>Video 8's tip: turn off the stock <i>frontend-design</i> skill so it doesn't compete with these.</p>
+      </article>
+
+      <article class="card">
+        <h3>Ruflo agent swarm <span class="by">video 3 · @kayvon.ai</span></h3>
+        <ul class="tight">
+          <li>100+ specialist agents for coding, testing, security and docs.</li>
+          <li>Queen agents plan; worker agents research, code, test and review in parallel.</li>
+          <li>Routes simple tasks to cheaper models; claims up to 75% lower API cost.</li>
+          <li>Background workers audit, optimize and find test gaps on their own.</li>
+        </ul>
+      </article>
+    </div>
+  </section>
+
+  <!-- ===================== PROMPT CODES ===================== -->
+  <section class="block" id="codes">
+    <h2>Prompt codes <span class="src">video 6 · @sebintel</span></h2>
+    <div class="callout">
+      <b>These aren't built-in commands.</b>
+      <span>Claude reads <code>/ghost</code> or <code>/L99</code> as ordinary text and guesses what you mean, so results vary. In the video, <code>/ghost</code> worked because the creator had a "humanizer" skill installed. Plain words ("rewrite this so it sounds human") work just as well.</span>
+    </div>
+
+    <div class="codes">
+      <div class="group">
+        <h3>The 5 from the video</h3>
+        <div class="row"><span>/ghost</span><span>Write so it reads as human</span></div>
+        <div class="row"><span>/artifacts</span><span>Build an interactive artifact (simulator, game)</span></div>
+        <div class="row"><span>/OODA</span><span>Observe → Orient → Decide → Act plan</span></div>
+        <div class="row"><span>/L99</span><span>Expert-level depth</span></div>
+        <div class="row"><span>/godmode</span><span>Rewrite and optimize your prompt first</span></div>
+      </div>
+    </div>
+
+    <details class="more" id="all-codes">
+      <summary>All 100 codes from the video's list</summary>
+      <div class="codes">
+        <div class="group"><h3>1–10</h3>
+          <div class="row"><span><small>1</small>/ghost</span><span>stealth reasoning mode</span></div>
+          <div class="row"><span><small>2</small>/artifacts</span><span>reveals hidden knowledge</span></div>
+          <div class="row"><span><small>3</small>/god mode</span><span>max creativity and precision</span></div>
+          <div class="row"><span><small>4</small>/omniscient</span><span>all-knowing mode</span></div>
+          <div class="row"><span><small>5</small>/hyperbrain</span><span>faster logical processing</span></div>
+          <div class="row"><span><small>6</small>/deep dive</span><span>ultra detailed explanation</span></div>
+          <div class="row"><span><small>7</small>/clarity</span><span>concise and precise output</span></div>
+          <div class="row"><span><small>8</small>/focus</span><span>ignore distractions, stay on task</span></div>
+          <div class="row"><span><small>9</small>/laser</span><span>pinpoint accuracy mode</span></div>
+          <div class="row"><span><small>10</small>/insight</span><span>intuitive reasoning boost</span></div>
+        </div>
+        <div class="group"><h3>Creativity &amp; style</h3>
+          <div class="row"><span><small>11</small>/imagine</span><span>full creative expansion</span></div>
+          <div class="row"><span><small>12</small>/surreal</span><span>dreamlike creativity mode</span></div>
+          <div class="row"><span><small>13</small>/cinematic</span><span>detailed visual storytelling</span></div>
+          <div class="row"><span><small>14</small>/vivid</span><span>enhanced sensory descriptions</span></div>
+          <div class="row"><span><small>15</small>/poetic</span><span>lyrical language mode</span></div>
+          <div class="row"><span><small>16</small>/dramatic</span><span>tense and gripping style</span></div>
+          <div class="row"><span><small>17</small>/humor</span><span>witty and comedic output</span></div>
+          <div class="row"><span><small>18</small>/storyteller</span><span>narrative-first style</span></div>
+          <div class="row"><span><small>19</small>/metaphor</span><span>abstract connections mode</span></div>
+          <div class="row"><span><small>20</small>/artful</span><span>artistic phrasing only</span></div>
+        </div>
+        <div class="group"><h3>Knowledge &amp; expertise</h3>
+          <div class="row"><span><small>21</small>/historian</span><span>expert in historical context</span></div>
+          <div class="row"><span><small>22</small>/scientist</span><span>analytical, fact-based mode</span></div>
+          <div class="row"><span><small>23</small>/philosopher</span><span>deep reasoning mode</span></div>
+          <div class="row"><span><small>24</small>/techie</span><span>detailed tech explanations</span></div>
+          <div class="row"><span><small>25</small>/mathematician</span><span>numeric and logical focus</span></div>
+          <div class="row"><span><small>26</small>/linguist</span><span>language-centric reasoning</span></div>
+          <div class="row"><span><small>27</small>/doctor</span><span>medical/health explanations</span></div>
+          <div class="row"><span><small>28</small>/engineer</span><span>practical, solution-driven mode</span></div>
+          <div class="row"><span><small>29</small>/economist</span><span>market, finance, trends focus</span></div>
+          <div class="row"><span><small>30</small>/lawyer</span><span>legal reasoning and clarity</span></div>
+        </div>
+        <div class="group"><h3>Problem solving</h3>
+          <div class="row"><span><small>31</small>/OODA</span><span>rapid iterative reasoning (Observe, Orient, Decide, Act)</span></div>
+          <div class="row"><span><small>32</small>/L99</span><span>elite problem-solving mode</span></div>
+          <div class="row"><span><small>33</small>/solver</span><span>focus purely on solutions</span></div>
+          <div class="row"><span><small>34</small>/debug</span><span>find errors in text/code</span></div>
+          <div class="row"><span><small>35</small>/optimizer</span><span>improve any process or content</span></div>
+          <div class="row"><span><small>36</small>/streamline</span><span>efficiency-focused response</span></div>
+          <div class="row"><span><small>37</small>/critical</span><span>critical thinking emphasis</span></div>
+          <div class="row"><span><small>38</small>/detective</span><span>investigative reasoning</span></div>
+          <div class="row"><span><small>39</small>/strategist</span><span>planning and tactics</span></div>
+          <div class="row"><span><small>40</small>/advisor</span><span>strategic recommendations</span></div>
+        </div>
+        <div class="group"><h3>Data &amp; analysis</h3>
+          <div class="row"><span><small>41</small>/analyst</span><span>data and stats interpretation</span></div>
+          <div class="row"><span><small>42</small>/trends</span><span>spotting patterns</span></div>
+          <div class="row"><span><small>43</small>/correlate</span><span>links ideas and data</span></div>
+          <div class="row"><span><small>44</small>/forecast</span><span>predict possible outcomes</span></div>
+          <div class="row"><span><small>45</small>/risk</span><span>evaluates risks and pitfalls</span></div>
+          <div class="row"><span><small>46</small>/logic</span><span>pure logical deductions</span></div>
+          <div class="row"><span><small>47</small>/matrix</span><span>multi-factor analysis</span></div>
+          <div class="row"><span><small>48</small>/inspector</span><span>checks for inconsistencies</span></div>
+          <div class="row"><span><small>49</small>/summary</span><span>concise synthesis</span></div>
+          <div class="row"><span><small>50</small>/breakdown</span><span>detailed step-by-step</span></div>
+        </div>
+        <div class="group"><h3>Persona / roleplay</h3>
+          <div class="row"><span><small>51</small>/mentor</span><span>guidance-focused</span></div>
+          <div class="row"><span><small>52</small>/coach</span><span>motivational advice</span></div>
+          <div class="row"><span><small>53</small>/teacher</span><span>instructive explanations</span></div>
+          <div class="row"><span><small>54</small>/storyhero</span><span>narrative hero perspective</span></div>
+          <div class="row"><span><small>55</small>/villain</span><span>contrarian viewpoint</span></div>
+          <div class="row"><span><small>56</small>/journalist</span><span>investigative reporting style</span></div>
+          <div class="row"><span><small>57</small>/interviewer</span><span>asks insightful questions</span></div>
+          <div class="row"><span><small>58</small>/debater</span><span>argument and counterargument mode</span></div>
+          <div class="row"><span><small>59</small>/friend</span><span>casual, supportive tone</span></div>
+          <div class="row"><span><small>60</small>/critic</span><span>critique-focused output</span></div>
+        </div>
+        <div class="group"><h3>Special AI modes</h3>
+          <div class="row"><span><small>61</small>/infinite</span><span>limitless creative expansion</span></div>
+          <div class="row"><span><small>62</small>/hyperfocus</span><span>ignore word limit</span></div>
+          <div class="row"><span><small>63</small>/memory</span><span>retains context across prompts</span></div>
+          <div class="row"><span><small>64</small>/sandbox</span><span>experimental ideas only</span></div>
+          <div class="row"><span><small>65</small>/simulation</span><span>model hypothetical scenarios</span></div>
+          <div class="row"><span><small>66</small>/multiverse</span><span>explore multiple perspectives</span></div>
+          <div class="row"><span><small>67</small>/timewarp</span><span>past/future contextual answers</span></div>
+          <div class="row"><span><small>68</small>/quantum</span><span>unconventional, probabilistic thinking</span></div>
+          <div class="row"><span><small>69</small>/dimension</span><span>multiple-layer reasoning</span></div>
+          <div class="row"><span><small>70</small>/fractal</span><span>recursive ideas and patterns</span></div>
+        </div>
+        <div class="group"><h3>Communication</h3>
+          <div class="row"><span><small>71</small>/concise</span><span>short and precise</span></div>
+          <div class="row"><span><small>72</small>/verbose</span><span>detailed and long-form</span></div>
+          <div class="row"><span><small>73</small>/analog</span><span>uses comparisons and metaphors</span></div>
+          <div class="row"><span><small>74</small>/clarify</span><span>simplifies complex concepts</span></div>
+          <div class="row"><span><small>75</small>/translate</span><span>multilingual explanations</span></div>
+          <div class="row"><span><small>76</small>/debunk</span><span>exposes false info</span></div>
+          <div class="row"><span><small>77</small>/highlight</span><span>emphasizes key points</span></div>
+          <div class="row"><span><small>78</small>/contrast</span><span>compares pros and cons</span></div>
+          <div class="row"><span><small>79</small>/rephrase</span><span>rewrite text in better style</span></div>
+          <div class="row"><span><small>80</small>/explainlikeimfive</span><span>simplest explanation</span></div>
+        </div>
+        <div class="group"><h3>Fun / experimental</h3>
+          <div class="row"><span><small>81</small>/alchemy</span><span>turns ideas into gold</span></div>
+          <div class="row"><span><small>82</small>/mindmap</span><span>visually organized thoughts</span></div>
+          <div class="row"><span><small>83</small>/lab</span><span>experimental approach</span></div>
+          <div class="row"><span><small>84</small>/chaos</span><span>unconventional randomness</span></div>
+          <div class="row"><span><small>85</small>/wizard</span><span>magical, imaginative output</span></div>
+          <div class="row"><span><small>86</small>/robot</span><span>purely factual and machine-like</span></div>
+          <div class="row"><span><small>87</small>/alien</span><span>outside-of-human perspective</span></div>
+          <div class="row"><span><small>88</small>/dream</span><span>visionary, creative ideas</span></div>
+          <div class="row"><span><small>89</small>/echo</span><span>repeats patterns and emphasizes</span></div>
+          <div class="row"><span><small>90</small>/mimic</span><span>copies a given style or voice</span></div>
+        </div>
+        <div class="group"><h3>Optimization</h3>
+          <div class="row"><span><small>91</small>/boost</span><span>overall performance enhancement</span></div>
+          <div class="row"><span><small>92</small>/refine</span><span>polish content to perfection</span></div>
+          <div class="row"><span><small>93</small>/amplify</span><span>strengthens argument or style</span></div>
+          <div class="row"><span><small>94</small>/elevate</span><span>higher-level perspective</span></div>
+          <div class="row"><span><small>95</small>/powerup</span><span>improves logic and creativity</span></div>
+          <div class="row"><span><small>96</small>/clarion</span><span>crystal-clear communication</span></div>
+          <div class="row"><span><small>97</small>/precision</span><span>zero errors</span></div>
+          <div class="row"><span><small>98</small>/spark</span><span>generates inspiration</span></div>
+          <div class="row"><span><small>99</small>/ignition</span><span>kickstarts new ideas</span></div>
+          <div class="row"><span><small>100</small>/supreme</span><span>max-level output</span></div>
+        </div>
+      </div>
+    </details>
+  </section>
+
+  <!-- ===================== SOURCES ===================== -->
+  <section class="block" id="sources">
+    <h2>Sources</h2>
+    <div class="tablewrap">
+      <table class="src">
+        <thead><tr><th>#</th><th>Creator</th><th>Video</th><th>What's from it</th></tr></thead>
+        <tbody>
+          <tr><td class="num">1</td><td>@walidsadvice</td><td>3 things to do with Claude</td><td>Memory, Composio connector, Anthropic courses</td></tr>
+          <tr><td class="num">2</td><td>@nathanhodgson.ai</td><td>Top Claude skills</td><td>Skill Creator, Stop Slop, Marketing Skills, UI UX Pro Max, Superpowers</td></tr>
+          <tr><td class="num">3</td><td>@kayvon.ai</td><td>Ruflo agent team</td><td>Ruflo plugin and MCP server</td></tr>
+          <tr><td class="num">4</td><td>@imjonathanacuna</td><td>Illegal Claude Tips pt. 37</td><td>The two-page Claude Code command sheet</td></tr>
+          <tr><td class="num">5</td><td>@ai.honeycove</td><td>Claude becomes a designer</td><td>Taste, Impeccable, Playwright CLI, Awesome DESIGN.md, img2threejs</td></tr>
+          <tr><td class="num">6</td><td>@sebintel</td><td>Secret Claude codes</td><td>The 100 prompt codes</td></tr>
+          <tr><td class="num">7</td><td>@ray_fu</td><td>Motion design with Claude</td><td>Render-loop workflow</td></tr>
+          <tr><td class="num">8</td><td>@adrien.ninet</td><td>Design skills</td><td>Emil Kowalski's skill, Impeccable, Taste</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <footer>Repos: anthropics/skills · hardikpandya/stop-slop · nextlevelbuilder/ui-ux-pro-max-skill · Leonxlnx/taste-skill · pbakaus/impeccable · emilkowalski/skill · microsoft/playwright-cli · hoainho/img2threejs · obra/superpowers · coreyhaines31/marketingskills · ruvnet/ruflo · VoltAgent/awesome-design-md. All MIT or Apache-2.0; licenses are kept inside each skill folder.</footer>
+  </section>
+</div>
+
+<script>
+(function () {
+  var input = document.getElementById('filter');
+  var count = document.getElementById('count');
+  var empty = document.getElementById('empty');
+  var details = document.getElementById('all-codes');
+  var rows = Array.prototype.slice.call(document.querySelectorAll('.row'));
+  var cards = Array.prototype.slice.call(document.querySelectorAll('.card'));
+  var groups = Array.prototype.slice.call(document.querySelectorAll('.group'));
+  var subheads = Array.prototype.slice.call(document.querySelectorAll('.group h4'));
+  var blocks = Array.prototype.slice.call(document.querySelectorAll('section.block'));
+
+  function apply() {
+    var q = input.value.trim().toLowerCase();
+    var shown = 0;
+    rows.forEach(function (r) {
+      var hit = !q || r.textContent.toLowerCase().indexOf(q) !== -1;
+      r.classList.toggle('is-hidden', !hit);
+      if (hit) shown++;
+    });
+    cards.forEach(function (c) {
+      var hit = !q || c.textContent.toLowerCase().indexOf(q) !== -1;
+      c.classList.toggle('is-hidden', !hit);
+      if (hit) shown++;
+    });
+    groups.forEach(function (g) {
+      var any = !q || g.querySelector('.row:not(.is-hidden)') || (g.querySelector('h3') && g.querySelector('h3').textContent.toLowerCase().indexOf(q) !== -1);
+      if (q && g.querySelector('h3') && g.querySelector('h3').textContent.toLowerCase().indexOf(q) !== -1) {
+        g.querySelectorAll('.row').forEach(function (r) { r.classList.remove('is-hidden'); });
+      }
+      g.classList.toggle('is-hidden', !any);
+    });
+    subheads.forEach(function (h) {
+      var el = h.nextElementSibling, any = false;
+      while (el && el.tagName !== 'H4' && el.tagName !== 'H3') {
+        if (el.classList.contains('row') && !el.classList.contains('is-hidden')) { any = true; break; }
+        el = el.nextElementSibling;
+      }
+      h.classList.toggle('is-hidden', !!q && !any);
+    });
+    blocks.forEach(function (b) {
+      if (!q) { b.classList.remove('is-hidden'); return; }
+      var any = b.querySelector('.row:not(.is-hidden), .card:not(.is-hidden)');
+      b.classList.toggle('is-hidden', !any);
+    });
+    if (q && details && details.querySelector('.row:not(.is-hidden)')) details.open = true;
+    count.textContent = q ? shown + ' match' + (shown === 1 ? '' : 'es') : '';
+    empty.classList.toggle('show', !!q && shown === 0);
+  }
+  input.addEventListener('input', apply);
+
+  document.querySelectorAll('[data-copy]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var code = btn.parentElement.querySelector('code');
+      var text = code.textContent;
+      function done(label) { btn.textContent = label; setTimeout(function () { btn.textContent = 'Copy'; }, 1400); }
+      function selectIt() {
+        var range = document.createRange(); range.selectNodeContents(code);
+        var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+        done('Selected');
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () { done('Copied'); }, selectIt);
+      } else { selectIt(); }
+    });
+  });
+})();
+</script>
