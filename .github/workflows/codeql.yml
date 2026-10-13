@@ -27,5 +27,9 @@ jobs:
         with:
           languages: javascript
           queries: security-extended
+          # Third-party Claude skills are vendored as-is and never ship with the site.
+          config: |
+            paths-ignore:
+              - .claude/skills
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@v3
