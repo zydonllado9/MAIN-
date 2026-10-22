@@ -22,6 +22,9 @@ Config.LaneWidth = 80
 Config.LaneLength = 3000
 Config.LobbySpawn = Vector3.new(0, 0.5, 70)
 Config.ReturnPoint = Vector3.new(0, 4, 32)
+Config.LeaderboardPosition = Vector3.new(-30, 0, 46) -- "Top Launches" board
+Config.HowToPlayPosition = Vector3.new(30, 0, 46) -- "How to Play" sign
+Config.LeaderboardStoreName = "SlingSmash_BestDistance_v1"
 
 -- The slingshot stands at the origin and fires towards Config.Forward.
 Config.SlingshotPosition = Vector3.new(0, 0, 0)
@@ -119,6 +122,20 @@ Config.RingRadius = 7
 Config.RingBoost = 35
 Config.RingLift = 28
 Config.CoinsPerStud = 2
+
+-- Mid-air rocket boost (click / Space / A button / BOOST button while flying).
+Config.Boost = {
+	BaseCharges = 1, -- everyone gets one; Rocket Fuel adds more
+	Forward = 32, -- studs/s added along the lane
+	Lift = 26, -- minimum upward speed after boosting
+	Cooldown = 0.35,
+}
+
+-- Slow motion when TNT goes off.
+Config.SlowMo = {
+	Duration = 0.35, -- real seconds
+	TimeScale = 0.3,
+}
 
 --------------------------------------------------------------------------------
 -- Flight physics (custom, simulated on the client)
@@ -247,6 +264,17 @@ Config.Branches = {
 		Requires = "ComboTime3",
 		Costs = { 10000, 60000 },
 	},
+	{
+		Key = "RocketFuel",
+		Name = "Rocket Fuel",
+		Icon = "⛽",
+		Description = "+1 mid-air rocket boost per launch per level.",
+		Tiers = 3,
+		Origin = { 2, -2 },
+		Dir = { 0, -1 },
+		Requires = "LaunchPower2",
+		Costs = { 2000, 9000, 30000 },
+	},
 }
 
 Config.Nodes = {}
@@ -310,6 +338,7 @@ function Config.ComputeStats(upgrades, rebirths)
 		SmashCoinMult = 1 + 0.2 * levels.SmashPower,
 		SmashSlow = math.max(0.25, 1 - 0.12 * levels.SmashPower),
 		HitRadius = 4 + 1.5 * levels.WreckingBall,
+		BoostCharges = Config.Boost.BaseCharges + levels.RocketFuel,
 		CoinMult = (1 + 0.25 * levels.CoinBonus) * Config.RebirthMultiplier(rebirths),
 	}
 end
@@ -337,6 +366,18 @@ end
 --------------------------------------------------------------------------------
 -- Rebirth, trails, settings, sounds
 --------------------------------------------------------------------------------
+
+-- Upper-cases a typed code and strips spaces; nil if it can't be a code.
+function Config.NormalizeCode(text: any): string?
+	if type(text) ~= "string" or #text > 40 then
+		return nil
+	end
+	local code = string.upper((string.gsub(text, "%s", "")))
+	if code == "" or #code > 20 then
+		return nil
+	end
+	return code
+end
 
 Config.Rebirth = {
 	BaseCost = 100000,

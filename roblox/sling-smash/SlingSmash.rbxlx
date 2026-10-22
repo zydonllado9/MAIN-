@@ -46,6 +46,9 @@ Config.LaneWidth = 80
 Config.LaneLength = 3000
 Config.LobbySpawn = Vector3.new(0, 0.5, 70)
 Config.ReturnPoint = Vector3.new(0, 4, 32)
+Config.LeaderboardPosition = Vector3.new(-30, 0, 46) -- "Top Launches" board
+Config.HowToPlayPosition = Vector3.new(30, 0, 46) -- "How to Play" sign
+Config.LeaderboardStoreName = "SlingSmash_BestDistance_v1"
 
 -- The slingshot stands at the origin and fires towards Config.Forward.
 Config.SlingshotPosition = Vector3.new(0, 0, 0)
@@ -143,6 +146,20 @@ Config.RingRadius = 7
 Config.RingBoost = 35
 Config.RingLift = 28
 Config.CoinsPerStud = 2
+
+-- Mid-air rocket boost (click / Space / A button / BOOST button while flying).
+Config.Boost = {
+	BaseCharges = 1, -- everyone gets one; Rocket Fuel adds more
+	Forward = 32, -- studs/s added along the lane
+	Lift = 26, -- minimum upward speed after boosting
+	Cooldown = 0.35,
+}
+
+-- Slow motion when TNT goes off.
+Config.SlowMo = {
+	Duration = 0.35, -- real seconds
+	TimeScale = 0.3,
+}
 
 --------------------------------------------------------------------------------
 -- Flight physics (custom, simulated on the client)
@@ -271,6 +288,17 @@ Config.Branches = {
 		Requires = "ComboTime3",
 		Costs = { 10000, 60000 },
 	},
+	{
+		Key = "RocketFuel",
+		Name = "Rocket Fuel",
+		Icon = "⛽",
+		Description = "+1 mid-air rocket boost per launch per level.",
+		Tiers = 3,
+		Origin = { 2, -2 },
+		Dir = { 0, -1 },
+		Requires = "LaunchPower2",
+		Costs = { 2000, 9000, 30000 },
+	},
 }
 
 Config.Nodes = {}
@@ -334,6 +362,7 @@ function Config.ComputeStats(upgrades, rebirths)
 		SmashCoinMult = 1 + 0.2 * levels.SmashPower,
 		SmashSlow = math.max(0.25, 1 - 0.12 * levels.SmashPower),
 		HitRadius = 4 + 1.5 * levels.WreckingBall,
+		BoostCharges = Config.Boost.BaseCharges + levels.RocketFuel,
 		CoinMult = (1 + 0.25 * levels.CoinBonus) * Config.RebirthMultiplier(rebirths),
 	}
 end
@@ -361,6 +390,25 @@ end
 --------------------------------------------------------------------------------
 -- Rebirth, trails, settings, sounds
 --------------------------------------------------------------------------------
+
+-- Redeemable codes: each player can use each code once.
+Config.Codes = {
+	LAUNCH = 500,
+	SMASH = 1500,
+	KABOOM = 3000,
+}
+
+-- Upper-cases a typed code and strips spaces; nil if it can't be a code.
+function Config.NormalizeCode(text: any): string?
+	if type(text) ~= "string" or #text > 40 then
+		return nil
+	end
+	local code = string.upper((string.gsub(text, "%s", "")))
+	if code == "" or #code > 20 then
+		return nil
+	end
+	return code
+end
 
 Config.Rebirth = {
 	BaseCost = 100000,
@@ -635,6 +683,49 @@ return CourseLayout
       </Item>
       <Item class="ModuleScript" referent="6">
         <Properties>
+          <string name="Name">Daily</string>
+          <string name="Source"><![CDATA[--[[
+	Daily reward with a 7-day streak, based on UTC calendar days.
+
+	Claim on consecutive days to climb the streak; miss a day and it restarts at
+	day 1. After day 7 the streak stays on the day-7 reward.
+]]
+
+local Config = require(script.Parent.Config)
+
+local Daily = {}
+
+Daily.Rewards = { 250, 500, 1000, 2000, 4000, 7500, 15000 }
+Daily.DaySeconds = 86400
+
+function Daily.DayNumber(now: number): number
+	return math.floor(now / Daily.DaySeconds)
+end
+
+-- daily = { Day = last claimed day number, Streak = streak at that claim }
+-- Returns canClaim, the streak the next claim gives, seconds until next claim.
+function Daily.Status(daily, now: number): (boolean, number, number)
+	local today = Daily.DayNumber(now)
+	local lastDay = daily and daily.Day or 0
+	local streak = daily and daily.Streak or 0
+	if lastDay >= today then
+		return false, math.max(1, streak), (today + 1) * Daily.DaySeconds - now
+	end
+	local nextStreak = if lastDay == today - 1 then streak + 1 else 1
+	return true, nextStreak, 0
+end
+
+function Daily.Reward(streak: number, rebirths: number?): number
+	local index = math.clamp(streak, 1, #Daily.Rewards)
+	return math.floor(Daily.Rewards[index] * Config.RebirthMultiplier(rebirths or 0))
+end
+
+return Daily
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="7">
+        <Properties>
           <string name="Name">Format</string>
           <string name="Source"><![CDATA[--[[
 	Number formatting helpers shared by the server and the UI.
@@ -688,13 +779,172 @@ return Format
 ]]></string>
         </Properties>
       </Item>
+      <Item class="ModuleScript" referent="8">
+        <Properties>
+          <string name="Name">Index</string>
+          <string name="Source"><![CDATA[--[[
+	The Index: a collection book of things to discover. Each entry unlocks once,
+	the first time a launch meets its goal, and pays a one-time coin reward.
+
+	The server evaluates entries against its own validated launch numbers; the
+	client only uses this module to draw the Index panel.
+]]
+
+local Config = require(script.Parent.Config)
+
+local Index = {}
+
+-- Goal types match the fields of a launch summary:
+--   Distance, Smashes, Stars, Rings, Gold, TNT, MaxCombo
+Index.Entries = {
+	{
+		Id = "Zone1",
+		Name = "Green Meadows",
+		Icon = "🌳",
+		Hint = "Launch for the first time",
+		Goal = "Distance",
+		Value = 1,
+		Reward = 100,
+	},
+	{
+		Id = "Zone2",
+		Name = "Sky City",
+		Icon = "🏙️",
+		Hint = "Fly " .. Config.Zones[1].EndsAt .. " studs",
+		Goal = "Distance",
+		Value = Config.Zones[1].EndsAt,
+		Reward = 1500,
+	},
+	{
+		Id = "Zone3",
+		Name = "Neon Grid",
+		Icon = "💠",
+		Hint = "Fly " .. Config.Zones[2].EndsAt .. " studs",
+		Goal = "Distance",
+		Value = Config.Zones[2].EndsAt,
+		Reward = 6000,
+	},
+	{
+		Id = "Zone4",
+		Name = "Candy Peaks",
+		Icon = "🍭",
+		Hint = "Fly " .. Config.Zones[3].EndsAt .. " studs",
+		Goal = "Distance",
+		Value = Config.Zones[3].EndsAt,
+		Reward = 25000,
+	},
+	{
+		Id = "Finish",
+		Name = "Finish Line",
+		Icon = "🏆",
+		Hint = "Reach the end of the lane",
+		Goal = "Distance",
+		Value = Config.LaneLength - 5,
+		Reward = 100000,
+	},
+	{
+		Id = "Gold",
+		Name = "Gold Rush",
+		Icon = "💛",
+		Hint = "Smash a gold block",
+		Goal = "Gold",
+		Value = 1,
+		Reward = 400,
+	},
+	{
+		Id = "TNT",
+		Name = "Kaboom",
+		Icon = "💣",
+		Hint = "Smash a TNT block",
+		Goal = "TNT",
+		Value = 1,
+		Reward = 400,
+	},
+	{
+		Id = "Star",
+		Name = "Star Catcher",
+		Icon = "⭐",
+		Hint = "Grab a floating star",
+		Goal = "Stars",
+		Value = 1,
+		Reward = 600,
+	},
+	{
+		Id = "Ring",
+		Name = "Ring Runner",
+		Icon = "🌀",
+		Hint = "Fly through a boost ring",
+		Goal = "Rings",
+		Value = 1,
+		Reward = 600,
+	},
+	{
+		Id = "Stars3",
+		Name = "Star Shower",
+		Icon = "🌟",
+		Hint = "Grab 3 stars in one launch",
+		Goal = "Stars",
+		Value = 3,
+		Reward = 4000,
+	},
+	{
+		Id = "Combo25",
+		Name = "Combo Master",
+		Icon = "🔥",
+		Hint = "Chain a 25-smash combo",
+		Goal = "MaxCombo",
+		Value = 25,
+		Reward = 2500,
+	},
+	{
+		Id = "Smash100",
+		Name = "Wrecking Crew",
+		Icon = "🔨",
+		Hint = "Smash 100 blocks in one launch",
+		Goal = "Smashes",
+		Value = 100,
+		Reward = 5000,
+	},
+}
+
+Index.ById = {}
+for _, entry in Index.Entries do
+	Index.ById[entry.Id] = entry
+end
+
+-- Entries this launch summary unlocks that aren't in `discovered` yet.
+function Index.Evaluate(summary, discovered)
+	local unlocked = {}
+	for _, entry in Index.Entries do
+		local value = summary[entry.Goal]
+		if not discovered[entry.Id] and type(value) == "number" and value >= entry.Value then
+			table.insert(unlocked, entry)
+		end
+	end
+	return unlocked
+end
+
+function Index.Count(discovered): number
+	local count = 0
+	for _, entry in Index.Entries do
+		if discovered[entry.Id] then
+			count += 1
+		end
+	end
+	return count
+end
+
+return Index
+]]></string>
+        </Properties>
+      </Item>
     </Item>
   </Item>
-  <Item class="ServerScriptService" referent="7">
+  <Item class="ServerScriptService" referent="9">
     <Properties>
       <string name="Name">ServerScriptService</string>
     </Properties>
-    <Item class="Script" referent="8">
+    <Item class="Script" referent="10">
       <Properties>
         <string name="Name">Server</string>
         <token name="RunContext">0</token>
@@ -712,8 +962,11 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared:WaitForChild("Config"))
 local CourseLayout = require(Shared:WaitForChild("CourseLayout"))
+local Daily = require(Shared:WaitForChild("Daily"))
+local Index = require(Shared:WaitForChild("Index"))
 
 local DataService = require(script.DataService)
+local Leaderboard = require(script.Leaderboard)
 local WorldBuilder = require(script.WorldBuilder)
 
 Players.CharacterAutoLoads = false
@@ -760,6 +1013,8 @@ local Rebirth = remote("RemoteFunction", "Rebirth") :: RemoteFunction
 local BuyTrail = remote("RemoteFunction", "BuyTrail") :: RemoteFunction
 local EquipTrail = remote("RemoteFunction", "EquipTrail") :: RemoteFunction
 local UpdateSetting = remote("RemoteEvent", "UpdateSetting") :: RemoteEvent
+local ClaimDaily = remote("RemoteFunction", "ClaimDaily") :: RemoteFunction
+local RedeemCode = remote("RemoteFunction", "RedeemCode") :: RemoteFunction
 
 remotes.Parent = ReplicatedStorage
 
@@ -767,9 +1022,18 @@ remotes.Parent = ReplicatedStorage
 -- World
 --------------------------------------------------------------------------------
 
-WorldBuilder.Build()
+local map = WorldBuilder.Build()
+
+Leaderboard.Init(map, function(player)
+	local data = DataService.Get(player)
+	return if data then data.BestDistance else 0
+end)
 
 local layout = CourseLayout.Get()
+local layoutKinds = { Block = 0, Gold = 0, TNT = 0 }
+for _, block in layout.Blocks do
+	layoutKinds[block.Kind] = (layoutKinds[block.Kind] or 0) + 1
+end
 
 --------------------------------------------------------------------------------
 -- Characters + trails
@@ -873,7 +1137,11 @@ local function onPlayerAdded(player: Player)
 		onCharacterAdded(player, character)
 	end)
 
-	DataService.Load(player)
+	local data = DataService.Load(player)
+	if data then
+		-- Seed the global board with bests from before it existed.
+		Leaderboard.Submit(player, data.BestDistance)
+	end
 	spawnCharacter(player)
 end
 
@@ -887,6 +1155,7 @@ Players.PlayerRemoving:Connect(function(player)
 end)
 
 game:BindToClose(function()
+	task.spawn(Leaderboard.Flush)
 	DataService.SaveAll()
 end)
 
@@ -952,6 +1221,9 @@ FinishLaunch.OnServerInvoke = function(player, launchId, report)
 	local maxSmashes = math.min(layout.TotalBlocks, math.floor(60 + elapsed * 30))
 	local smashes = math.clamp(math.floor(safeNumber(report.Smashes)), 0, maxSmashes)
 	local stars = math.clamp(math.floor(safeNumber(report.Stars)), 0, #layout.Stars)
+	local rings = math.clamp(math.floor(safeNumber(report.Rings)), 0, #layout.Rings)
+	local gold = math.clamp(math.floor(safeNumber(report.Gold)), 0, math.min(smashes, layoutKinds.Gold))
+	local tnt = math.clamp(math.floor(safeNumber(report.TNT)), 0, math.min(smashes, layoutKinds.TNT))
 	local maxCombo = math.clamp(math.floor(safeNumber(report.MaxCombo)), 0, smashes)
 
 	local maxZoneMult = Config.Zones[#Config.Zones].ValueMult
@@ -963,10 +1235,30 @@ FinishLaunch.OnServerInvoke = function(player, launchId, report)
 	local distanceCoins = math.floor(distance * Config.CoinsPerStud * stats.CoinMult)
 	local earned = runCoins + distanceCoins
 
+	-- Index discoveries pay a one-time bonus on top of the launch.
+	local discoveries = {}
+	local discoveryCoins = 0
+	local summary = {
+		Distance = distance,
+		Smashes = smashes,
+		Stars = stars,
+		Rings = rings,
+		Gold = gold,
+		TNT = tnt,
+		MaxCombo = maxCombo,
+	}
+	for _, entry in Index.Evaluate(summary, data.Index) do
+		data.Index[entry.Id] = true
+		discoveryCoins += entry.Reward
+		table.insert(discoveries, { Id = entry.Id, Name = entry.Name, Icon = entry.Icon, Reward = entry.Reward })
+	end
+	earned += discoveryCoins
+
 	local newBest = distance > data.BestDistance
 	data.Coins += earned
 	if newBest then
 		data.BestDistance = math.floor(distance)
+		Leaderboard.Submit(player, data.BestDistance)
 	end
 	data.Stats.Launches += 1
 	data.Stats.TotalSmashes += smashes
@@ -986,6 +1278,8 @@ FinishLaunch.OnServerInvoke = function(player, launchId, report)
 		Stars = stars,
 		NewBest = newBest,
 		Best = data.BestDistance,
+		Discoveries = discoveries,
+		DiscoveryCoins = discoveryCoins,
 	}
 end
 
@@ -1061,6 +1355,54 @@ EquipTrail.OnServerInvoke = function(player, trailId)
 	return true
 end
 
+ClaimDaily.OnServerInvoke = function(player)
+	local data = DataService.Get(player)
+	if not data then
+		return false, "Data not loaded"
+	end
+	local now = os.time()
+	local canClaim, streak = Daily.Status(data.Daily, now)
+	if not canClaim then
+		return false, "Already claimed today"
+	end
+	local reward = Daily.Reward(streak, data.Rebirths)
+	data.Daily.Day = Daily.DayNumber(now)
+	data.Daily.Streak = streak
+	data.Coins += reward
+	DataService.Changed(player)
+	return true, reward
+end
+
+local lastCodeAttempt = {} -- [Player] = os.clock()
+Players.PlayerRemoving:Connect(function(player)
+	lastCodeAttempt[player] = nil
+end)
+
+RedeemCode.OnServerInvoke = function(player, text)
+	local data = DataService.Get(player)
+	if not data then
+		return false, "Data not loaded"
+	end
+	local now = os.clock()
+	if lastCodeAttempt[player] and now - lastCodeAttempt[player] < 1 then
+		return false, "Slow down!"
+	end
+	lastCodeAttempt[player] = now
+
+	local code = Config.NormalizeCode(text)
+	local reward = code and Config.Codes[code]
+	if not code or not reward then
+		return false, "That code doesn't exist"
+	end
+	if data.Codes[code] then
+		return false, "You already used that code"
+	end
+	data.Codes[code] = true
+	data.Coins += reward
+	DataService.Changed(player)
+	return true, reward
+end
+
 UpdateSetting.OnServerEvent:Connect(function(player, key, value)
 	local data = DataService.Get(player)
 	if not data or type(key) ~= "string" or type(value) ~= "boolean" then
@@ -1075,7 +1417,7 @@ end)
 print("[SlingSmash] Server ready -", layout.TotalBlocks, "blocks,", #layout.Stars, "stars,", #layout.Rings, "boost rings")
 ]]></string>
       </Properties>
-      <Item class="ModuleScript" referent="9">
+      <Item class="ModuleScript" referent="11">
         <Properties>
           <string name="Name">DataService</string>
           <string name="Source"><![CDATA[--[[
@@ -1122,6 +1464,9 @@ local function defaultData()
 		Trails = { None = true },
 		EquippedTrail = "None",
 		Settings = settings,
+		Index = {}, -- [entryId] = true, kept through rebirths
+		Daily = { Day = 0, Streak = 0 },
+		Codes = {}, -- [code] = true
 		Stats = {
 			Launches = 0,
 			TotalSmashes = 0,
@@ -1297,7 +1642,323 @@ return DataService
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="10">
+      <Item class="ModuleScript" referent="12">
+        <Properties>
+          <string name="Name">Leaderboard</string>
+          <string name="Source"><![CDATA[--[[
+	"Top Launches" board in the lobby.
+
+	Published games keep a global top 10 in an OrderedDataStore. Where
+	DataStores aren't available (an unpublished place, or Studio without API
+	access) the board shows the best distances of the players in this server.
+]]
+
+local DataStoreService = game:GetService("DataStoreService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.Shared.Config)
+local Format = require(ReplicatedStorage.Shared.Format)
+
+local Leaderboard = {}
+
+local ROWS = 10
+local GLOBAL_REFRESH = 60
+local LOCAL_REFRESH = 5
+local FLUSH_INTERVAL = 30
+
+local store: OrderedDataStore? = nil
+local warned = false
+local pending = {} -- [userId] = best distance waiting to be written
+local nameCache = {} -- [userId] = display name
+local rows = {} -- { { Name: TextLabel, Value: TextLabel } }
+local statusLabel: TextLabel? = nil
+local getBest: (Player) -> number = function()
+	return 0
+end
+
+do
+	local ok, result = pcall(function()
+		return DataStoreService:GetOrderedDataStore(Config.LeaderboardStoreName)
+	end)
+	if ok then
+		store = result
+	end
+end
+
+local function disableStore(err: any)
+	if not warned then
+		warned = true
+		warn("[SlingSmash] Global leaderboard unavailable, showing this server only:", err)
+	end
+	store = nil
+end
+
+local function label(props): TextLabel
+	local text = Instance.new("TextLabel")
+	text.BackgroundTransparency = 1
+	text.Font = Enum.Font.FredokaOne
+	text.TextScaled = true
+	text.TextColor3 = Color3.new(1, 1, 1)
+	for key, value in props do
+		(text :: any)[key] = value
+	end
+	local stroke = Instance.new("UIStroke")
+	stroke.Thickness = 2
+	stroke.Color = Color3.fromRGB(30, 18, 10)
+	stroke.Parent = text
+	return text
+end
+
+local function buildBoard(parent: Instance)
+	local position = Config.LeaderboardPosition
+	local spawn = Config.LobbySpawn
+	local height = 13
+	local center = position + Vector3.new(0, height, 0)
+	local lookTarget = Vector3.new(spawn.X, center.Y, spawn.Z)
+
+	local model = Instance.new("Model")
+	model.Name = "TopLaunchesBoard"
+	model.Parent = parent
+
+	local board = Instance.new("Part")
+	board.Name = "Board"
+	board.Anchored = true
+	board.Size = Vector3.new(20, 22, 1)
+	board.CFrame = CFrame.lookAt(center, lookTarget)
+	board.Color = Color3.fromRGB(70, 46, 32)
+	board.Material = Enum.Material.SmoothPlastic
+	board.Parent = model
+
+	for _, side in { -1, 1 } do
+		local post = Instance.new("Part")
+		post.Name = "Post"
+		post.Anchored = true
+		post.Size = Vector3.new(1.4, height + 11, 1.4)
+		post.CFrame = board.CFrame * CFrame.new(side * 10.7, -(height + 11) / 2 + 11, 0)
+		post.Color = Color3.fromRGB(255, 196, 40)
+		post.Material = Enum.Material.SmoothPlastic
+		post.Parent = model
+	end
+
+	local gui = Instance.new("SurfaceGui")
+	gui.Face = Enum.NormalId.Front -- lookAt points the front face at the spawn
+	gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	gui.PixelsPerStud = 25
+	gui.LightInfluence = 0
+	gui.Parent = board
+
+	local padding = Instance.new("UIPadding")
+	padding.PaddingTop = UDim.new(0, 16)
+	padding.PaddingBottom = UDim.new(0, 16)
+	padding.PaddingLeft = UDim.new(0, 20)
+	padding.PaddingRight = UDim.new(0, 20)
+	padding.Parent = gui
+
+	local list = Instance.new("UIListLayout")
+	list.SortOrder = Enum.SortOrder.LayoutOrder
+	list.Padding = UDim.new(0, 6)
+	list.Parent = gui
+
+	local title = label({
+		Text = "🏆 TOP LAUNCHES",
+		Size = UDim2.new(1, 0, 0, 64),
+		TextColor3 = Color3.fromRGB(255, 214, 60),
+		LayoutOrder = 0,
+	})
+	title.Parent = gui
+
+	for rank = 1, ROWS do
+		local row = Instance.new("Frame")
+		row.Name = "Row" .. rank
+		row.Size = UDim2.new(1, 0, 0, 38)
+		row.BackgroundColor3 = if rank % 2 == 0 then Color3.fromRGB(86, 58, 40) else Color3.fromRGB(100, 68, 46)
+		row.BorderSizePixel = 0
+		row.LayoutOrder = rank
+		row.Parent = gui
+		local corner = Instance.new("UICorner")
+		corner.CornerRadius = UDim.new(0, 8)
+		corner.Parent = row
+
+		local medal = if rank == 1 then "🥇" elseif rank == 2 then "🥈" elseif rank == 3 then "🥉" else "#" .. rank
+		label({
+			Text = medal,
+			Position = UDim2.fromOffset(6, 3),
+			Size = UDim2.new(0, 50, 1, -6),
+			Parent = row,
+		})
+		local name = label({
+			Text = "---",
+			Position = UDim2.fromOffset(62, 3),
+			Size = UDim2.new(0.62, -62, 1, -6),
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Parent = row,
+		})
+		local value = label({
+			Text = "",
+			AnchorPoint = Vector2.new(1, 0),
+			Position = UDim2.new(1, -10, 0, 3),
+			Size = UDim2.new(0.38, -10, 1, -6),
+			TextXAlignment = Enum.TextXAlignment.Right,
+			TextColor3 = Color3.fromRGB(140, 255, 100),
+			Parent = row,
+		})
+		rows[rank] = { Name = name, Value = value }
+	end
+
+	local status = label({
+		Text = "",
+		Size = UDim2.new(1, 0, 0, 26),
+		TextColor3 = Color3.fromRGB(255, 226, 190),
+		LayoutOrder = ROWS + 1,
+	})
+	status.Parent = gui
+	statusLabel = status
+end
+
+local function nameFor(userId: number): string
+	local player = Players:GetPlayerByUserId(userId)
+	if player then
+		return player.DisplayName
+	end
+	local cached = nameCache[userId]
+	if cached then
+		return cached
+	end
+	local ok, name = pcall(function()
+		return Players:GetNameFromUserIdAsync(userId)
+	end)
+	local result = if ok and type(name) == "string" then name else "Player"
+	nameCache[userId] = result
+	return result
+end
+
+local function render(entries, isGlobal: boolean)
+	for rank = 1, ROWS do
+		local row = rows[rank]
+		local entry = entries[rank]
+		if row then
+			row.Name.Text = if entry then entry.Name else "---"
+			row.Value.Text = if entry then Format.Commas(entry.Value) else ""
+		end
+	end
+	if statusLabel then
+		statusLabel.Text = if isGlobal
+			then "🌍 All servers • best distance in studs"
+			else "🏠 This server • publish the game for a global board"
+	end
+end
+
+local function localEntries()
+	local entries = {}
+	for _, player in Players:GetPlayers() do
+		local best = getBest(player)
+		if best > 0 then
+			table.insert(entries, { Name = player.DisplayName, Value = best })
+		end
+	end
+	table.sort(entries, function(a, b)
+		return a.Value > b.Value
+	end)
+	return entries
+end
+
+local function globalEntries()
+	local activeStore = store
+	if not activeStore then
+		return nil
+	end
+	local ok, pages = pcall(function()
+		return activeStore:GetSortedAsync(false, ROWS)
+	end)
+	if not ok then
+		disableStore(pages)
+		return nil
+	end
+	local entries = {}
+	for _, item in pages:GetCurrentPage() do
+		local userId = tonumber(item.key)
+		if userId and type(item.value) == "number" then
+			table.insert(entries, { Name = nameFor(userId), Value = item.value })
+		end
+	end
+	return entries
+end
+
+function Leaderboard.Refresh()
+	local entries = globalEntries()
+	if entries then
+		render(entries, true)
+	else
+		render(localEntries(), false)
+	end
+end
+
+-- Remembers a player's new best; written to the global store in batches.
+function Leaderboard.Submit(player: Player, best: number)
+	if best <= 0 then
+		return
+	end
+	pending[player.UserId] = math.floor(best)
+	if not store then
+		render(localEntries(), false)
+	end
+end
+
+-- Writes queued bests. Only ever raises a stored value.
+function Leaderboard.Flush(onlyUserId: number?)
+	local activeStore = store
+	if not activeStore then
+		return
+	end
+	for userId, best in pending do
+		if onlyUserId == nil or onlyUserId == userId then
+			local ok, err = pcall(function()
+				activeStore:UpdateAsync(tostring(userId), function(old)
+					if type(old) == "number" and old >= best then
+						return nil
+					end
+					return best
+				end)
+			end)
+			if ok then
+				pending[userId] = nil
+			else
+				disableStore(err)
+				return
+			end
+		end
+	end
+end
+
+function Leaderboard.Init(parent: Instance, bestForPlayer: (Player) -> number)
+	getBest = bestForPlayer
+	buildBoard(parent)
+	render({}, store ~= nil)
+
+	Players.PlayerRemoving:Connect(function(player)
+		task.spawn(Leaderboard.Flush, player.UserId)
+	end)
+
+	task.spawn(function()
+		while true do
+			Leaderboard.Refresh()
+			task.wait(if store then GLOBAL_REFRESH else LOCAL_REFRESH)
+		end
+	end)
+	task.spawn(function()
+		while true do
+			task.wait(FLUSH_INTERVAL)
+			Leaderboard.Flush()
+		end
+	end)
+end
+
+return Leaderboard
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="13">
         <Properties>
           <string name="Name">WorldBuilder</string>
           <string name="Source"><![CDATA[--[[
@@ -1596,14 +2257,22 @@ local function buildSlingshot(map: Folder)
 		})
 	end
 
-	-- Trunk.
-	part({
+	-- Trunk, with an "E to launch" prompt for players who walk up to it.
+	local trunk = part({
 		Name = "Trunk",
 		Size = Vector3.new(2.2, 6, 2.2),
 		CFrame = CFrame.new(base + Vector3.new(0, 3.5, 0)),
 		Color = wood,
 		Parent = model,
 	})
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "SlingLaunchPrompt"
+	prompt.ActionText = "Launch"
+	prompt.ObjectText = "Slingshot"
+	prompt.HoldDuration = 0
+	prompt.MaxActivationDistance = 18
+	prompt.RequiresLineOfSight = false
+	prompt.Parent = trunk
 
 	-- Two arms angled 25 degrees outwards, with red caps.
 	local angle = math.rad(25)
@@ -1659,6 +2328,87 @@ local function buildSlingshot(map: Folder)
 	spawn.Duration = 0
 	spawn.Neutral = true
 	spawn.Parent = map
+end
+
+--------------------------------------------------------------------------------
+-- How to play sign
+--------------------------------------------------------------------------------
+
+local HOW_TO_PLAY = {
+	"1. Press 🎯 LAUNCH (or E at the slingshot)",
+	"2. HOLD to charge, RELEASE to fly",
+	"3. Steer with A / D or the stick",
+	"4. CLICK or SPACE in the air to 🚀 BOOST",
+	"5. Smash blocks, TNT and stars for ⭐",
+	"6. Buy ⬆️ UPGRADES and fly further!",
+}
+
+local function buildHowToPlay(map: Folder)
+	local position = Config.HowToPlayPosition
+	local spawn = Config.LobbySpawn
+	local center = position + Vector3.new(0, 11, 0)
+
+	local model = Instance.new("Model")
+	model.Name = "HowToPlay"
+	model.Parent = map
+
+	local board = part({
+		Name = "Board",
+		Size = Vector3.new(20, 16, 1),
+		CFrame = CFrame.lookAt(center, Vector3.new(spawn.X, center.Y, spawn.Z)),
+		Color = Color3.fromRGB(70, 46, 32),
+		Parent = model,
+	})
+	for _, side in { -1, 1 } do
+		part({
+			Name = "Post",
+			Size = Vector3.new(1.4, 19, 1.4),
+			CFrame = board.CFrame * CFrame.new(side * 10.7, -1.5, 0),
+			Color = Color3.fromRGB(255, 196, 40),
+			Parent = model,
+		})
+	end
+
+	local gui = Instance.new("SurfaceGui")
+	gui.Face = Enum.NormalId.Front
+	gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	gui.PixelsPerStud = 25
+	gui.LightInfluence = 0
+	gui.Parent = board
+
+	local padding = Instance.new("UIPadding")
+	padding.PaddingTop = UDim.new(0, 16)
+	padding.PaddingBottom = UDim.new(0, 16)
+	padding.PaddingLeft = UDim.new(0, 22)
+	padding.PaddingRight = UDim.new(0, 22)
+	padding.Parent = gui
+
+	local list = Instance.new("UIListLayout")
+	list.SortOrder = Enum.SortOrder.LayoutOrder
+	list.Padding = UDim.new(0, 8)
+	list.Parent = gui
+
+	local function line(text: string, order: number, height: number, color: Color3, align: Enum.TextXAlignment)
+		local label = Instance.new("TextLabel")
+		label.BackgroundTransparency = 1
+		label.Size = UDim2.new(1, 0, 0, height)
+		label.Font = Enum.Font.FredokaOne
+		label.Text = text
+		label.TextScaled = true
+		label.TextColor3 = color
+		label.TextXAlignment = align
+		label.LayoutOrder = order
+		label.Parent = gui
+		local stroke = Instance.new("UIStroke")
+		stroke.Thickness = 2
+		stroke.Color = Color3.fromRGB(30, 18, 10)
+		stroke.Parent = label
+	end
+
+	line("HOW TO PLAY", 0, 62, Color3.fromRGB(255, 214, 60), Enum.TextXAlignment.Center)
+	for i, text in HOW_TO_PLAY do
+		line(text, i, 40, Color3.new(1, 1, 1), Enum.TextXAlignment.Left)
+	end
 end
 
 --------------------------------------------------------------------------------
@@ -1873,6 +2623,7 @@ function WorldBuilder.Build()
 	buildGround(map)
 	buildLane(map)
 	buildSlingshot(map)
+	buildHowToPlay(map)
 	buildDecorations(map)
 
 	map.Parent = Workspace
@@ -1886,15 +2637,15 @@ return WorldBuilder
       </Item>
     </Item>
   </Item>
-  <Item class="StarterPlayer" referent="11">
+  <Item class="StarterPlayer" referent="14">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="12">
+    <Item class="StarterPlayerScripts" referent="15">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="LocalScript" referent="13">
+      <Item class="LocalScript" referent="16">
         <Properties>
           <string name="Name">Client</string>
           <string name="Source"><![CDATA[--[[
@@ -1910,8 +2661,10 @@ return WorldBuilder
 
 local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
+local ProximityPromptService = game:GetService("ProximityPromptService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local StarterGui = game:GetService("StarterGui")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
@@ -1936,6 +2689,7 @@ local UpdateSettingRemote = remotes:WaitForChild("UpdateSetting") :: RemoteEvent
 local HOLD_STEP = "SlingSmashHold"
 local FLIGHT_STEP = "SlingSmashFlight"
 local CHARGE_ACTION = "SlingSmashCharge"
+local BOOST_ACTION = "SlingSmashBoost"
 local SUBSTEP = 1 / 120
 
 local rng = Random.new()
@@ -2061,6 +2815,18 @@ local function restoreCamera()
 	cam.FieldOfView = 70
 end
 
+-- The player list covers the distance counter, so hide it while flying.
+local function setPlayerListVisible(visible: boolean)
+	pcall(function()
+		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList, visible)
+	end)
+end
+
+-- "Press E to launch" prompts only make sense while standing around.
+local function setPromptsEnabled(enabled: boolean)
+	ProximityPromptService.Enabled = enabled
+end
+
 local function pouchCFrame(amount: number): CFrame
 	local back = Config.PouchRestOffset + Config.PouchPullDistance * amount
 	local position = Config.SlingshotPosition + Vector3.new(0, Config.PouchHeight - amount * 1.2, back)
@@ -2132,7 +2898,7 @@ end
 -- Aiming + charging
 --------------------------------------------------------------------------------
 
-local enterAiming, startFlight, returnToLobby
+local enterAiming, startFlight, returnToLobby, boost
 
 local function aimCamera(amount: number, dt: number)
 	local pouch = pouchCFrame(amount).Position
@@ -2228,6 +2994,7 @@ enterAiming = function()
 	state = "Aiming"
 	power = 0
 	chargeInput = nil
+	setPromptsEnabled(false)
 	setBandsVisible(true)
 	bindStep(HOLD_STEP, holdStep)
 	ContextActionService:BindActionAtPriority(
@@ -2255,11 +3022,13 @@ local function cancelAim()
 end
 
 UserInputService.InputBegan:Connect(function(input, processed)
-	if processed or state ~= "Aiming" then
+	if processed or not isPointerInput(input) then
 		return
 	end
-	if isPointerInput(input) then
+	if state == "Aiming" then
 		startCharging(input)
+	elseif state == "Flying" then
+		boost()
 	end
 end)
 
@@ -2304,7 +3073,14 @@ local function registerSmash(f, entry)
 			* stats.CoinMult
 	)
 	f.RunCoins += coins
+	if entry.Data.Kind == "Gold" then
+		f.Gold += 1
+	elseif entry.Data.Kind == "TNT" then
+		f.TNT += 1
+	end
 
+	local sparkKey = entry.Data.Kind .. ":" .. entry.Data.Zone .. ":" .. entry.Data.ColorIndex
+	Effects.Burst(entry.Position, sparkKey, entry.Part.Color, if crit then 14 else 6)
 	Effects.Play("Smash", rng:NextNumber(0.85, 1.35), 0.05)
 	if crit then
 		UI.Pop("CRITICAL!", "crit")
@@ -2340,6 +3116,7 @@ local function explode(f, first)
 	f.Velocity = Vector3.new(f.Velocity.X, math.max(f.Velocity.Y, Config.Blocks.TNT.Lift), f.Velocity.Z)
 	f.Grounded = false
 	f.FovKick = 10
+	f.SlowMo = Config.SlowMo.Duration
 	Effects.Shake(2.2)
 	Effects.Flash(Color3.fromRGB(255, 170, 60), 0.35)
 	UI.Pop("BOOM!", "crit")
@@ -2380,6 +3157,7 @@ local function onRing(ring)
 		return
 	end
 	course:UseRing(ring)
+	f.Rings += 1
 	f.Velocity += Config.Forward * Config.RingBoost
 	f.Velocity = Vector3.new(f.Velocity.X, math.max(f.Velocity.Y, Config.RingLift), f.Velocity.Z)
 	f.Grounded = false
@@ -2388,6 +3166,26 @@ local function onRing(ring)
 	Effects.Flash(Color3.fromRGB(80, 230, 255), 0.3)
 	Effects.Play("Launch", 1.4)
 	Effects.Shake(0.8)
+end
+
+-- Mid-air rocket boost; limited charges per launch (Rocket Fuel adds more).
+boost = function()
+	local f = flight
+	if not f or f.Done or f.Boosts <= 0 or f.BoostCooldown > 0 then
+		return
+	end
+	f.Boosts -= 1
+	f.BoostCooldown = Config.Boost.Cooldown
+	f.Velocity += Config.Forward * Config.Boost.Forward
+	f.Velocity = Vector3.new(f.Velocity.X, math.max(f.Velocity.Y, Config.Boost.Lift), f.Velocity.Z)
+	f.Grounded = false
+	f.FovKick = 12
+	UI.SetBoosts(f.Boosts)
+	UI.Pop("🚀 BOOST!", "boost")
+	Effects.Flash(Color3.fromRGB(255, 170, 60), 0.25)
+	Effects.Burst(f.Position, "boost", Color3.fromRGB(255, 150, 40), 20)
+	Effects.Play("Launch", 1.2)
+	Effects.Shake(0.9)
 end
 
 -- One fixed physics substep of length h.
@@ -2478,8 +3276,15 @@ local function flightStep(dt: number)
 		return
 	end
 	dt = math.min(dt, 0.1)
-	local steps = math.max(1, math.ceil(dt / SUBSTEP))
-	local h = dt / steps
+	-- TNT slow motion: the world slows down, the camera keeps real time.
+	local simDt = dt
+	if f.SlowMo > 0 then
+		f.SlowMo -= dt
+		simDt = dt * Config.SlowMo.TimeScale
+	end
+	f.BoostCooldown = math.max(0, f.BoostCooldown - dt)
+	local steps = math.max(1, math.ceil(simDt / SUBSTEP))
+	local h = simDt / steps
 	local steer = steerInput()
 	for _ = 1, steps do
 		simulate(f, h, steer)
@@ -2555,6 +3360,12 @@ startFlight = function(launchPower: number)
 		RunCoins = 0,
 		Smashes = 0,
 		Stars = 0,
+		Rings = 0,
+		Gold = 0,
+		TNT = 0,
+		Boosts = stats.BoostCharges,
+		BoostCooldown = 0,
+		SlowMo = 0,
 		Zone = 1,
 		FovKick = 8,
 		CameraPosition = camera().CFrame.Position,
@@ -2575,6 +3386,22 @@ startFlight = function(launchPower: number)
 	end)
 
 	UI.SetMode("Flying")
+	UI.SetBoosts(f.Boosts)
+	setPlayerListVisible(false)
+	ContextActionService:BindActionAtPriority(
+		BOOST_ACTION,
+		function(_actionName, inputState)
+			if inputState == Enum.UserInputState.Begin then
+				boost()
+			end
+			return Enum.ContextActionResult.Sink
+		end,
+		false,
+		Enum.ContextActionPriority.High.Value + 10,
+		Enum.KeyCode.Space,
+		Enum.KeyCode.ButtonA,
+		Enum.KeyCode.ButtonR2
+	)
 	UI.Pop(if launchPower >= 0.99 then "PERFECT!" else "LAUNCH!", "max")
 	Effects.Play("Launch", 0.9)
 	Effects.Shake(1)
@@ -2588,6 +3415,9 @@ finishFlight = function(reason: string)
 	end
 	flight = nil
 	unbindStep(FLIGHT_STEP)
+	ContextActionService:UnbindAction(BOOST_ACTION)
+	setPlayerListVisible(true)
+	setPromptsEnabled(true)
 	Effects.SetWind(0)
 	Effects.HideSpeedLines()
 	state = "Results"
@@ -2618,6 +3448,9 @@ finishFlight = function(reason: string)
 			Distance = distance,
 			Smashes = f.Smashes,
 			Stars = f.Stars,
+			Rings = f.Rings,
+			Gold = f.Gold,
+			TNT = f.TNT,
 			MaxCombo = f.MaxCombo,
 			RunCoins = f.RunCoins,
 		}
@@ -2641,6 +3474,10 @@ finishFlight = function(reason: string)
 			UI.Pop("NEW BEST!", "best")
 			Effects.Flash(Color3.fromRGB(255, 200, 255), 0.3)
 		end
+		local discoveries = result.Discoveries
+		if type(discoveries) == "table" and #discoveries > 0 then
+			UI.Banner("📖 NEW DISCOVERY: " .. discoveries[1].Icon .. " " .. string.upper(discoveries[1].Name))
+		end
 		Effects.Play("Coin", 1)
 		UI.ShowResults(result, comboMultiplier)
 	end)
@@ -2651,6 +3488,9 @@ returnToLobby = function()
 	flight = nil
 	unbindStep(FLIGHT_STEP)
 	unbindAiming()
+	ContextActionService:UnbindAction(BOOST_ACTION)
+	setPlayerListVisible(true)
+	setPromptsEnabled(true)
 	Effects.SetWind(0)
 	Effects.HideSpeedLines()
 	setFlyerMode(false)
@@ -2670,6 +3510,9 @@ local function resetToLobbyState()
 	flight = nil
 	unbindStep(FLIGHT_STEP)
 	unbindAiming()
+	ContextActionService:UnbindAction(BOOST_ACTION)
+	setPlayerListVisible(true)
+	setPromptsEnabled(true)
 	Effects.SetWind(0)
 	Effects.HideSpeedLines()
 	table.clear(savedGroups)
@@ -2707,7 +3550,7 @@ local function applyData(newData)
 	Effects.ApplySettings(newData.Settings)
 end
 
-local function invoke(remoteName: string, ...): (boolean, string?)
+local function invoke(remoteName: string, ...): (boolean, any)
 	local args = table.pack(...)
 	local remote = remotes:FindFirstChild(remoteName)
 	if not remote or not remote:IsA("RemoteFunction") then
@@ -2788,6 +3631,29 @@ UI.Init(playerGui, {
 			UI.Toast(message or "Couldn't equip that", Color3.fromRGB(255, 120, 120))
 		end
 	end,
+	Boost = function()
+		boost()
+	end,
+	ClaimDaily = function()
+		local ok, result = invoke("ClaimDaily")
+		if ok then
+			UI.Pop("🎁 DAILY REWARD!", "best")
+			UI.Toast("🎁 +" .. Format.Commas(tonumber(result) or 0) .. " coins!", Color3.fromRGB(140, 255, 100))
+			Effects.Play("Coin", 1.3)
+			Effects.Flash(Color3.fromRGB(255, 225, 90), 0.3)
+		else
+			UI.Toast(tostring(result or "Can't claim yet"), Color3.fromRGB(255, 120, 120))
+		end
+	end,
+	RedeemCode = function(text: string)
+		local ok, result = invoke("RedeemCode", text)
+		if ok then
+			UI.CodeResult(true, "✅ +" .. Format.Commas(tonumber(result) or 0) .. " coins!")
+			Effects.Play("Coin", 1.3)
+		else
+			UI.CodeResult(false, tostring(result or "Couldn't redeem that"))
+		end
+	end,
 	Setting = function(key: string, value: boolean)
 		if not data then
 			return
@@ -2798,6 +3664,13 @@ UI.Init(playerGui, {
 		UpdateSettingRemote:FireServer(key, value)
 	end,
 })
+
+-- Walking up to the slingshot and pressing E also works.
+ProximityPromptService.PromptTriggered:Connect(function(prompt, who)
+	if who == player and prompt.Name == "SlingLaunchPrompt" then
+		enterAiming()
+	end
+end)
 
 -- Holding the power panel itself also charges (handy on phones).
 UI.PowerButton().InputBegan:Connect(function(input)
@@ -2833,7 +3706,7 @@ if player.Character then
 end
 ]]></string>
         </Properties>
-        <Item class="ModuleScript" referent="14">
+        <Item class="ModuleScript" referent="17">
           <Properties>
             <string name="Name">Course</string>
             <string name="Source"><![CDATA[--[[
@@ -3175,7 +4048,7 @@ return Course
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="15">
+        <Item class="ModuleScript" referent="18">
           <Properties>
             <string name="Name">Effects</string>
             <string name="Source"><![CDATA[--[[
@@ -3458,6 +4331,64 @@ function Effects.FloatText(position: Vector3, text: string, color: Color3, size:
 	end)
 end
 
+-- Sparkle bursts. One emitter per colour key so recolouring never repaints
+-- sparks that are already flying.
+local burstEmitters = {} -- [key] = { Part, Emitter }
+local MAX_EMITTERS = 24
+
+local function burstEmitter(key: string, color: Color3)
+	local existing = burstEmitters[key]
+	if existing and existing.Part.Parent then
+		return existing
+	end
+	local count = 0
+	for _ in burstEmitters do
+		count += 1
+	end
+	if count >= MAX_EMITTERS then
+		return nil
+	end
+
+	local holder = Instance.new("Part")
+	holder.Name = "SlingBurst"
+	holder.Anchored = true
+	holder.CanCollide = false
+	holder.CanQuery = false
+	holder.CanTouch = false
+	holder.Transparency = 1
+	holder.Size = Vector3.new(1, 1, 1)
+	holder.Parent = Workspace
+
+	local emitter = Instance.new("ParticleEmitter")
+	emitter.Rate = 0
+	emitter.Lifetime = NumberRange.new(0.35, 0.7)
+	emitter.Speed = NumberRange.new(16, 34)
+	emitter.SpreadAngle = Vector2.new(180, 180)
+	emitter.Drag = 3
+	emitter.Acceleration = Vector3.new(0, -40, 0)
+	emitter.Size = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 1),
+		NumberSequenceKeypoint.new(1, 0),
+	})
+	emitter.Transparency = NumberSequence.new(0, 0.4)
+	emitter.LightEmission = 0.7
+	emitter.Color = ColorSequence.new(color)
+	emitter.Parent = holder
+
+	local entry = { Part = holder, Emitter = emitter }
+	burstEmitters[key] = entry
+	return entry
+end
+
+function Effects.Burst(position: Vector3, key: string, color: Color3, amount: number)
+	local entry = burstEmitter(key, color)
+	if not entry then
+		return
+	end
+	entry.Part.CFrame = CFrame.new(position)
+	entry.Emitter:Emit(amount)
+end
+
 -- Client-side explosion: purely visual, never hurts anyone.
 function Effects.Explosion(position: Vector3, radius: number)
 	local explosion = Instance.new("Explosion")
@@ -3473,7 +4404,7 @@ return Effects
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="16">
+        <Item class="ModuleScript" referent="19">
           <Properties>
             <string name="Name">UI</string>
             <string name="Source"><![CDATA[--[[
@@ -3487,7 +4418,9 @@ local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 
 local Config = require(ReplicatedStorage.Shared.Config)
+local Daily = require(ReplicatedStorage.Shared.Daily)
 local Format = require(ReplicatedStorage.Shared.Format)
+local Index = require(ReplicatedStorage.Shared.Index)
 local UpgradeTree = require(script.Parent.UpgradeTree)
 local Widgets = require(script.Parent.Widgets)
 
@@ -3504,6 +4437,11 @@ local panels = {} -- [name] = Frame
 local settingButtons = {} -- [key] = { Button, Label }
 local shopRows = {} -- [trailId] = { Button, Label, Price }
 local statLabels = {} -- [key] = TextLabel
+local indexCards = {} -- [entryId] = { Card, Icon, Name, Detail, Stroke }
+local dailyCards = {} -- [day] = { Card, Stroke, Label }
+local dailyRefs: { [string]: any } = {}
+local codeRefs: { [string]: any } = {}
+local dailyPrompted = false
 local rebirthRefs: { [string]: any } = {}
 
 local displayedRunCoins = 0
@@ -3566,11 +4504,30 @@ local function buildLobby()
 		UI.OpenPanel("Upgrades")
 	end)
 
+	-- Tutorial pointers for new players (bounced in UI.Init's render loop).
+	local function pointer(name: string, text: string, x: number): TextLabel
+		local label = Widgets.Label({
+			Name = name,
+			Text = text,
+			AnchorPoint = Vector2.new(0.5, 0),
+			Position = UDim2.new(0, x, 1, 10),
+			Size = UDim2.fromOffset(220, 40),
+			TextColor3 = C.Header,
+			StrokeThickness = 3,
+			Visible = false,
+			ZIndex = 5,
+			Parent = top,
+		})
+		return label
+	end
+	refs.LaunchPointer = pointer("LaunchPointer", "👆 START HERE!", 106)
+	refs.UpgradePointer = pointer("UpgradePointer", "👆 SPEND YOUR ⭐!", 334)
+
 	local menu = Widgets.new("Frame", {
 		Name = "SideMenu",
 		AnchorPoint = Vector2.new(0, 0.5),
 		Position = UDim2.new(0, 12, 0.5, 0),
-		Size = UDim2.fromOffset(190, 296),
+		Size = UDim2.fromOffset(190, 396),
 		BackgroundTransparency = 1,
 		Parent = gui,
 	})
@@ -3587,7 +4544,9 @@ local function buildLobby()
 		{ "Shop", "🛒", "Shop" },
 		{ "Upgrades", "⬆️", "Upgrades" },
 		{ "Rebirth", "🔄", "Rebirth" },
-		{ "Index", "📖", nil },
+		{ "Index", "📖", "Index" },
+		{ "Daily", "🎁", "Daily" },
+		{ "Codes", "🎟️", "Codes" },
 		{ "Stats", "📊", "Stats" },
 		{ "Settings", "⚙️", "Settings" },
 	}
@@ -3787,7 +4746,7 @@ local function buildRunHud()
 		Name = "Hint",
 		AnchorPoint = Vector2.new(0.5, 1),
 		Position = UDim2.new(0.5, 0, 1, -18),
-		Size = UDim2.fromOffset(340, 48),
+		Size = UDim2.fromOffset(460, 48),
 		Visible = false,
 		Parent = gui,
 	})
@@ -3800,6 +4759,63 @@ local function buildRunHud()
 		Parent = hint,
 	})
 	refs.Hint = hint
+
+	-- Round BOOST button (essential on phones, handy everywhere).
+	local boost = Widgets.new("TextButton", {
+		Name = "Boost",
+		Text = "",
+		AutoButtonColor = false,
+		AnchorPoint = Vector2.new(1, 1),
+		Position = UDim2.new(1, -24, 1, -24),
+		Size = UDim2.fromOffset(124, 124),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		Visible = false,
+		ZIndex = 6,
+		Parent = gui,
+	})
+	Widgets.Round(boost)
+	refs.BoostStroke = Widgets.Stroke(boost, Color3.fromRGB(110, 40, 0), 4)
+	refs.BoostGradient = Widgets.Gradient(boost, Color3.fromRGB(255, 190, 60), Color3.fromRGB(240, 90, 30))
+	Widgets.AutoScale(boost)
+	Widgets.Label({
+		Text = "🚀",
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 14),
+		Size = UDim2.fromOffset(56, 56),
+		StrokeThickness = 0,
+		ZIndex = 7,
+		Parent = boost,
+	})
+	Widgets.Label({
+		Text = "BOOST",
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 1, -16),
+		Size = UDim2.fromOffset(90, 26),
+		ZIndex = 7,
+		Parent = boost,
+	})
+	local count = Widgets.new("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(1, -14, 0, 14),
+		Size = UDim2.fromOffset(40, 40),
+		BackgroundColor3 = C.Dark,
+		ZIndex = 8,
+		Parent = boost,
+	})
+	Widgets.Round(count)
+	Widgets.Stroke(count, Color3.new(1, 1, 1), 2)
+	refs.BoostCount = Widgets.Label({
+		Text = "1",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromScale(0.7, 0.7),
+		ZIndex = 9,
+		Parent = count,
+	})
+	boost.Activated:Connect(function()
+		actions.Boost()
+	end)
+	refs.Boost = boost
 
 	-- Power bar. The whole panel is a button so phones can press and hold it.
 	local power = Widgets.new("TextButton", {
@@ -3972,7 +4988,7 @@ local function statBox(parent: Instance, x: number, icon: string): TextLabel
 end
 
 local function buildResults()
-	local panel, content, close = Widgets.Panel(gui, "🏆 Launch Complete!", Vector2.new(470, 440))
+	local panel, content, close = Widgets.Panel(gui, "🏆 Launch Complete!", Vector2.new(470, 480))
 	panels.Results = panel
 	close.Activated:Connect(function()
 		actions.Return()
@@ -4024,6 +5040,18 @@ local function buildResults()
 	refs.ResultDistance = statBox(row, 0, "🏁")
 	refs.ResultSmashes = statBox(row, 144, "🔨")
 	refs.ResultCombo = statBox(row, 288, "🔥")
+
+	refs.ResultDiscoveries = Widgets.Label({
+		Text = "",
+		Position = UDim2.fromOffset(0, 238),
+		Size = UDim2.new(1, 0, 0, 48),
+		TextWrapped = true,
+		TextColor3 = Color3.fromRGB(130, 230, 255),
+		MaxTextSize = 22,
+		Visible = false,
+		ZIndex = 22,
+		Parent = content,
+	})
 
 	local retry = Widgets.Button({
 		Text = "Retry",
@@ -4263,10 +5291,11 @@ local STAT_ROWS = {
 	{ "StarsCollected", "⭐ Stars Collected" },
 	{ "TotalCoins", "💰 Coins Earned" },
 	{ "Rebirths", "🔄 Rebirths" },
+	{ "Index", "📖 Index Found" },
 }
 
 local function buildStats()
-	local panel, content, close = Widgets.Panel(gui, "📊 Stats", Vector2.new(460, 500))
+	local panel, content, close = Widgets.Panel(gui, "📊 Stats", Vector2.new(460, 556))
 	panels.Stats = panel
 	close.Activated:Connect(UI.ClosePanels)
 	Widgets.new("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = content })
@@ -4313,6 +5342,7 @@ local function refreshStats()
 		StarsCollected = Format.Commas(data.Stats.StarsCollected),
 		TotalCoins = Format.Coins(data.Stats.TotalCoins),
 		Rebirths = tostring(data.Rebirths),
+		Index = Index.Count(data.Index or {}) .. " / " .. #Index.Entries,
 	}
 	for key, label in statLabels do
 		label.Text = values[key] or "0"
@@ -4371,6 +5401,312 @@ local function refreshSettings()
 end
 
 --------------------------------------------------------------------------------
+-- Index (collection book)
+--------------------------------------------------------------------------------
+
+local function buildIndex()
+	local panel, content, close = Widgets.Panel(gui, "📖 Index", Vector2.new(600, 540))
+	panels.Index = panel
+	close.Activated:Connect(UI.ClosePanels)
+
+	refs.IndexProgress = Widgets.Label({
+		Text = "Discovered 0 / " .. #Index.Entries,
+		Size = UDim2.new(1, 0, 0, 30),
+		TextColor3 = C.Header,
+		ZIndex = 22,
+		Parent = content,
+	})
+
+	local list = Widgets.new("ScrollingFrame", {
+		Position = UDim2.fromOffset(0, 40),
+		Size = UDim2.new(1, 0, 1, -40),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ScrollBarThickness = 8,
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		CanvasSize = UDim2.new(),
+		ZIndex = 22,
+		Parent = content,
+	})
+	Widgets.new("UIGridLayout", {
+		CellSize = UDim2.fromOffset(170, 132),
+		CellPadding = UDim2.fromOffset(10, 10),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		Parent = list,
+	})
+
+	for order, entry in Index.Entries do
+		local card = Widgets.new("Frame", {
+			Name = entry.Id,
+			BackgroundColor3 = C.PanelDark,
+			LayoutOrder = order,
+			ZIndex = 22,
+			Parent = list,
+		})
+		Widgets.Corner(card, 12)
+		local stroke = Widgets.Stroke(card, C.PanelStroke, 3)
+		local icon = Widgets.Label({
+			Text = entry.Icon,
+			AnchorPoint = Vector2.new(0.5, 0),
+			Position = UDim2.new(0.5, 0, 0, 6),
+			Size = UDim2.fromOffset(48, 48),
+			StrokeThickness = 0,
+			ZIndex = 23,
+			Parent = card,
+		})
+		local name = Widgets.Label({
+			Text = entry.Name,
+			Position = UDim2.fromOffset(6, 56),
+			Size = UDim2.new(1, -12, 0, 26),
+			ZIndex = 23,
+			Parent = card,
+		})
+		local detail = Widgets.Label({
+			Text = entry.Hint,
+			Position = UDim2.fromOffset(6, 84),
+			Size = UDim2.new(1, -12, 0, 40),
+			TextWrapped = true,
+			TextColor3 = Color3.fromRGB(255, 226, 190),
+			StrokeThickness = 0,
+			MaxTextSize = 16,
+			ZIndex = 23,
+			Parent = card,
+		})
+		indexCards[entry.Id] = { Icon = icon, Name = name, Detail = detail, Stroke = stroke }
+	end
+end
+
+local function refreshIndex()
+	if not data then
+		return
+	end
+	local discovered = data.Index or {}
+	refs.IndexProgress.Text = string.format("Discovered %d / %d", Index.Count(discovered), #Index.Entries)
+	for _, entry in Index.Entries do
+		local card = indexCards[entry.Id]
+		local found = discovered[entry.Id] == true
+		card.Icon.Text = if found then entry.Icon else "❓"
+		card.Icon.TextTransparency = 0
+		card.Name.TextColor3 = if found then Color3.new(1, 1, 1) else Color3.fromRGB(190, 170, 150)
+		card.Detail.Text = if found
+			then "✅ Found! +" .. Format.Short(entry.Reward)
+			else entry.Hint .. "\n⭐ " .. Format.Short(entry.Reward)
+		card.Stroke.Color = if found then Color3.fromRGB(120, 255, 90) else C.PanelStroke
+	end
+end
+
+--------------------------------------------------------------------------------
+-- Daily reward
+--------------------------------------------------------------------------------
+
+local function formatWait(seconds: number): string
+	local hours = math.floor(seconds / 3600)
+	local minutes = math.floor((seconds % 3600) / 60)
+	if hours > 0 then
+		return string.format("%dh %dm", hours, minutes)
+	end
+	return string.format("%dm %ds", minutes, math.floor(seconds % 60))
+end
+
+local function buildDaily()
+	local panel, content, close = Widgets.Panel(gui, "🎁 Daily Reward", Vector2.new(580, 380))
+	panels.Daily = panel
+	close.Activated:Connect(UI.ClosePanels)
+
+	Widgets.Label({
+		Text = "Come back every day for bigger rewards!",
+		Size = UDim2.new(1, 0, 0, 28),
+		TextColor3 = Color3.fromRGB(255, 230, 190),
+		ZIndex = 22,
+		Parent = content,
+	})
+
+	local row = Widgets.new("Frame", {
+		Position = UDim2.fromOffset(0, 40),
+		Size = UDim2.new(1, 0, 0, 110),
+		BackgroundTransparency = 1,
+		ZIndex = 22,
+		Parent = content,
+	})
+	Widgets.new("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		HorizontalAlignment = Enum.HorizontalAlignment.Center,
+		Padding = UDim.new(0, 8),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		Parent = row,
+	})
+	for day = 1, #Daily.Rewards do
+		local card = Widgets.new("Frame", {
+			Size = UDim2.fromOffset(68, 106),
+			BackgroundColor3 = C.PanelDark,
+			LayoutOrder = day,
+			ZIndex = 22,
+			Parent = row,
+		})
+		Widgets.Corner(card, 10)
+		local stroke = Widgets.Stroke(card, C.PanelStroke, 3)
+		Widgets.Label({
+			Text = "Day " .. day,
+			Position = UDim2.fromOffset(4, 6),
+			Size = UDim2.new(1, -8, 0, 22),
+			ZIndex = 23,
+			Parent = card,
+		})
+		Widgets.Label({
+			Text = if day == #Daily.Rewards then "💎" else "⭐",
+			AnchorPoint = Vector2.new(0.5, 0),
+			Position = UDim2.new(0.5, 0, 0, 30),
+			Size = UDim2.fromOffset(36, 36),
+			StrokeThickness = 0,
+			ZIndex = 23,
+			Parent = card,
+		})
+		local label = Widgets.Label({
+			Text = Format.Short(Daily.Rewards[day]),
+			Position = UDim2.fromOffset(4, 72),
+			Size = UDim2.new(1, -8, 0, 26),
+			TextColor3 = C.Coin,
+			ZIndex = 23,
+			Parent = card,
+		})
+		dailyCards[day] = { Stroke = stroke, Label = label }
+	end
+
+	dailyRefs.Status = Widgets.Label({
+		Text = "",
+		Position = UDim2.fromOffset(0, 160),
+		Size = UDim2.new(1, 0, 0, 28),
+		TextColor3 = Color3.fromRGB(140, 255, 100),
+		ZIndex = 22,
+		Parent = content,
+	})
+	local button, label = Widgets.Button({
+		Text = "Claim",
+		Color = C.Green,
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 1, 0),
+		Size = UDim2.fromOffset(280, 68),
+		ZIndex = 22,
+		Parent = content,
+	})
+	dailyRefs.Button = button
+	dailyRefs.ButtonLabel = label
+	button.Activated:Connect(function()
+		actions.ClaimDaily()
+	end)
+end
+
+local function refreshDaily()
+	if not data then
+		return
+	end
+	local canClaim, streak, wait = Daily.Status(data.Daily, os.time())
+	local highlight = math.clamp(streak, 1, #Daily.Rewards)
+	for day, card in dailyCards do
+		card.Label.Text = Format.Short(Daily.Reward(day, data.Rebirths))
+		if day == highlight then
+			card.Stroke.Color = if canClaim then C.Header else Color3.fromRGB(120, 255, 90)
+			card.Stroke.Thickness = 4
+		elseif day < highlight then
+			card.Stroke.Color = Color3.fromRGB(120, 255, 90)
+			card.Stroke.Thickness = 3
+		else
+			card.Stroke.Color = C.PanelStroke
+			card.Stroke.Thickness = 3
+		end
+	end
+	if canClaim then
+		dailyRefs.Status.Text = "Day " .. streak .. " reward is ready!"
+		dailyRefs.ButtonLabel.Text = "Claim ⭐ " .. Format.Coins(Daily.Reward(streak, data.Rebirths))
+		Widgets.SetButtonColor(dailyRefs.Button, C.Green)
+	else
+		dailyRefs.Status.Text = "Streak: " .. streak .. " day" .. (if streak == 1 then "" else "s") .. " 🔥"
+		dailyRefs.ButtonLabel.Text = "Next in " .. formatWait(wait)
+		Widgets.SetButtonColor(dailyRefs.Button, C.Grey)
+	end
+	refs.DailyBadge.Visible = canClaim
+end
+
+--------------------------------------------------------------------------------
+-- Codes
+--------------------------------------------------------------------------------
+
+local function buildCodes()
+	local panel, content, close = Widgets.Panel(gui, "🎟️ Codes", Vector2.new(460, 330))
+	panels.Codes = panel
+	close.Activated:Connect(UI.ClosePanels)
+
+	Widgets.Label({
+		Text = "Got a code? Type it here!",
+		Size = UDim2.new(1, 0, 0, 30),
+		ZIndex = 22,
+		Parent = content,
+	})
+	local box = Widgets.new("TextBox", {
+		Position = UDim2.fromOffset(0, 42),
+		Size = UDim2.new(1, 0, 0, 56),
+		BackgroundColor3 = Color3.fromRGB(250, 244, 230),
+		ClearTextOnFocus = false,
+		Font = Widgets.Font,
+		PlaceholderText = "Type a code...",
+		PlaceholderColor3 = Color3.fromRGB(150, 130, 110),
+		Text = "",
+		TextColor3 = Color3.fromRGB(40, 26, 16),
+		TextScaled = true,
+		ZIndex = 22,
+		Parent = content,
+	})
+	Widgets.Corner(box, 12)
+	Widgets.Stroke(box, C.PanelStroke, 3)
+	Widgets.new("UIPadding", {
+		PaddingLeft = UDim.new(0, 14),
+		PaddingRight = UDim.new(0, 14),
+		PaddingTop = UDim.new(0, 10),
+		PaddingBottom = UDim.new(0, 10),
+		Parent = box,
+	})
+	codeRefs.Box = box
+	codeRefs.Result = Widgets.Label({
+		Text = "Hint: try LAUNCH",
+		Position = UDim2.fromOffset(0, 108),
+		Size = UDim2.new(1, 0, 0, 28),
+		TextColor3 = Color3.fromRGB(255, 226, 190),
+		ZIndex = 22,
+		Parent = content,
+	})
+	local button = Widgets.Button({
+		Text = "Redeem",
+		Color = C.Green,
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 1, 0),
+		Size = UDim2.fromOffset(240, 64),
+		ZIndex = 22,
+		Parent = content,
+	})
+	local function submit()
+		local text = box.Text
+		if text ~= "" then
+			actions.RedeemCode(text)
+		end
+	end
+	button.Activated:Connect(submit)
+	box.FocusLost:Connect(function(enterPressed)
+		if enterPressed then
+			submit()
+		end
+	end)
+end
+
+-- Shows the outcome of a code redemption under the text box.
+function UI.CodeResult(ok: boolean, message: string)
+	codeRefs.Result.Text = message
+	codeRefs.Result.TextColor3 = if ok then Color3.fromRGB(140, 255, 100) else Color3.fromRGB(255, 130, 120)
+	if ok then
+		codeRefs.Box.Text = ""
+	end
+end
+
+--------------------------------------------------------------------------------
 -- Public API
 --------------------------------------------------------------------------------
 
@@ -4393,6 +5729,9 @@ function UI.Init(playerGui: PlayerGui, callbacks)
 	buildRebirth()
 	buildStats()
 	buildSettings()
+	buildIndex()
+	buildDaily()
+	buildCodes()
 	UpgradeTree.Init(gui, function(nodeId)
 		actions.BuyUpgrade(nodeId)
 	end)
@@ -4410,6 +5749,20 @@ function UI.Init(playerGui: PlayerGui, callbacks)
 		end
 		if refs.PowerGradient then
 			refs.PowerGradient.Offset = Vector2.new(math.sin(os.clock() * 2) * 0.1, 0)
+		end
+		-- Bounce the tutorial pointers.
+		local bounce = math.abs(math.sin(os.clock() * 4)) * 8
+		refs.LaunchPointer.Position = UDim2.new(0, 106, 1, 10 + bounce)
+		refs.UpgradePointer.Position = UDim2.new(0, 334, 1, 10 + bounce)
+	end)
+
+	-- Keep the daily countdown ticking while its panel is open.
+	task.spawn(function()
+		while true do
+			task.wait(1)
+			if panels.Daily.Visible then
+				refreshDaily()
+			end
 		end
 	end)
 
@@ -4438,7 +5791,39 @@ function UI.SetData(newData)
 	refreshRebirth()
 	refreshStats()
 	refreshSettings()
+	refreshIndex()
+	refreshDaily()
 	UI.RefreshHint()
+	UI.RefreshPointers()
+
+	-- Greet returning players with their daily reward, once per session.
+	if not dailyPrompted and Daily.Status(data.Daily, os.time()) then
+		dailyPrompted = true
+		task.delay(1.5, function()
+			if mode == "Lobby" and not UpgradeTree.IsOpen() then
+				local anyOpen = false
+				for name, panel in panels do
+					if name ~= "Results" and panel.Visible then
+						anyOpen = true
+					end
+				end
+				if not anyOpen then
+					UI.OpenPanel("Daily")
+				end
+			end
+		end)
+	end
+end
+
+-- Pointers for brand-new players: first press Launch, then buy an upgrade.
+function UI.RefreshPointers()
+	local launches = if data then data.Stats.Launches else 0
+	local ownsUpgrade = data ~= nil and next(data.Upgrades) ~= nil
+	refs.LaunchPointer.Visible = mode == "Lobby" and data ~= nil and launches == 0
+	refs.UpgradePointer.Visible = mode == "Lobby"
+		and launches > 0
+		and not ownsUpgrade
+		and UpgradeTree.HasAffordable(data)
 end
 
 function UI.ClosePanels()
@@ -4481,17 +5866,29 @@ function UI.SetMode(newMode: string)
 	refs.Distance.Visible = flying or results
 	refs.Power.Visible = aiming
 	refs.Combo.Visible = false
+	refs.Boost.Visible = flying
 	panels.Results.Visible = false
 	if not lobby then
 		UI.ClosePanels()
 	end
 	UI.RefreshHint()
+	UI.RefreshPointers()
 end
 
 function UI.RefreshHint()
 	local showHints = data == nil or data.Settings.Hints ~= false
 	refs.Hint.Visible = mode == "Flying" and showHints
-	refs.HintLabel.Text = if isTouchOnly() then "USE THE STICK TO STEER" else "A / D TO STEER"
+	refs.HintLabel.Text = if isTouchOnly()
+		then "STICK TO STEER • TAP 🚀 TO BOOST"
+		else "A / D TO STEER • CLICK TO BOOST"
+end
+
+-- Shows how many mid-air boosts are left.
+function UI.SetBoosts(left: number)
+	refs.BoostCount.Text = tostring(left)
+	local color = if left > 0 then Color3.fromRGB(255, 190, 60) else Color3.fromRGB(130, 130, 140)
+	local dark = if left > 0 then Color3.fromRGB(240, 90, 30) else Color3.fromRGB(80, 80, 90)
+	refs.BoostGradient.Color = ColorSequence.new(color, dark)
 end
 
 -- stateName: "aim" | "charging"
@@ -4594,26 +5991,99 @@ function UI.Toast(text: string, color: Color3?)
 	end)
 end
 
+local resultToken = 0
+
 function UI.ShowResults(result, comboMultiplier: number)
+	resultToken += 1
+	local token = resultToken
 	local panel = panels.Results
 	refs.ResultTitle.Text = if result.NewBest then "NEW BEST!" else "NICE LAUNCH!"
 	refs.ResultGradient.Enabled = result.NewBest == true
 	refs.ResultTitle.TextColor3 = if result.NewBest then Color3.new(1, 1, 1) else C.Header
-	refs.ResultEarned.Text = "⭐ +" .. Format.Commas(result.Earned or 0)
 	if result.Failed then
 		refs.ResultBreakdown.Text = "Server didn't respond - nothing was saved"
 	else
-		refs.ResultBreakdown.Text = string.format(
-			"Smashing ⭐ %s  •  Distance ⭐ %s",
-			Format.Short(result.RunCoins or 0),
-			Format.Short(result.DistanceCoins or 0)
-		)
+		local parts = {
+			"Smashing ⭐ " .. Format.Short(result.RunCoins or 0),
+			"Distance ⭐ " .. Format.Short(result.DistanceCoins or 0),
+		}
+		if (result.DiscoveryCoins or 0) > 0 then
+			table.insert(parts, "Index ⭐ " .. Format.Short(result.DiscoveryCoins))
+		end
+		refs.ResultBreakdown.Text = table.concat(parts, "  •  ")
 	end
+
+	local found = {}
+	for _, entry in result.Discoveries or {} do
+		table.insert(found, string.format("%s %s (+%s)", entry.Icon, entry.Name, Format.Short(entry.Reward)))
+	end
+	refs.ResultDiscoveries.Visible = #found > 0
+	refs.ResultDiscoveries.Text = "📖 NEW: " .. table.concat(found, "   ")
+
 	refs.ResultDistance.Text = Format.Commas(result.Distance or 0)
 	refs.ResultSmashes.Text = Format.Commas(result.Smashes or 0)
 	refs.ResultCombo.Text = "x" .. comboMultiplier
 	panel.Visible = true
 	Widgets.PopIn(panel)
+
+	-- Count the earned coins up instead of showing them all at once.
+	local earned = result.Earned or 0
+	local start = os.clock()
+	local duration = math.clamp(0.4 + earned / 20000, 0.4, 1.2)
+	refs.ResultEarned.Text = "⭐ +0"
+	task.spawn(function()
+		while token == resultToken do
+			local alpha = math.min(1, (os.clock() - start) / duration)
+			local eased = 1 - (1 - alpha) ^ 3
+			refs.ResultEarned.Text = "⭐ +" .. Format.Commas(math.floor(earned * eased + 0.5))
+			if alpha >= 1 then
+				break
+			end
+			task.wait()
+		end
+	end)
+
+	if result.NewBest then
+		UI.Confetti()
+	end
+end
+
+-- A burst of falling confetti across the whole screen.
+function UI.Confetti()
+	local colors = {
+		Color3.fromRGB(255, 90, 90),
+		Color3.fromRGB(255, 210, 60),
+		Color3.fromRGB(90, 220, 110),
+		Color3.fromRGB(70, 180, 255),
+		Color3.fromRGB(200, 110, 255),
+	}
+	local layer = Widgets.new("Frame", {
+		Name = "Confetti",
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		ZIndex = 70,
+		Parent = gui,
+	})
+	for i = 1, 60 do
+		local piece = Widgets.new("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.new(math.random(), 0, 0, -20 - math.random(0, 120)),
+			Size = UDim2.fromOffset(math.random(8, 14), math.random(14, 22)),
+			Rotation = math.random(0, 360),
+			BackgroundColor3 = colors[(i % #colors) + 1],
+			BorderSizePixel = 0,
+			ZIndex = 71,
+			Parent = layer,
+		})
+		local fall = TweenInfo.new(1.6 + math.random() * 1.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+		TweenService:Create(piece, fall, {
+			Position = UDim2.new(piece.Position.X.Scale + (math.random() - 0.5) * 0.2, 0, 1, 40),
+			Rotation = piece.Rotation + math.random(-540, 540),
+		}):Play()
+	end
+	task.delay(3.2, function()
+		layer:Destroy()
+	end)
 end
 
 function UI.HideResults()
@@ -4624,7 +6094,7 @@ return UI
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="17">
+        <Item class="ModuleScript" referent="20">
           <Properties>
             <string name="Name">UpgradeTree</string>
             <string name="Source"><![CDATA[--[[
@@ -5184,7 +6654,7 @@ return UpgradeTree
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="18">
+        <Item class="ModuleScript" referent="21">
           <Properties>
             <string name="Name">Widgets</string>
             <string name="Source"><![CDATA[--[[
@@ -5498,7 +6968,7 @@ return Widgets
       </Item>
     </Item>
   </Item>
-  <Item class="Workspace" referent="19">
+  <Item class="Workspace" referent="22">
     <Properties>
       <string name="Name">Workspace</string>
       <bool name="NeedsPivotMigration">false</bool>

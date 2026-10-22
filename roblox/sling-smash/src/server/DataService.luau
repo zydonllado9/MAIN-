@@ -42,6 +42,9 @@ local function defaultData()
 		Trails = { None = true },
 		EquippedTrail = "None",
 		Settings = settings,
+		Index = {}, -- [entryId] = true, kept through rebirths
+		Daily = { Day = 0, Streak = 0 },
+		Codes = {}, -- [code] = true
 		Stats = {
 			Launches = 0,
 			TotalSmashes = 0,

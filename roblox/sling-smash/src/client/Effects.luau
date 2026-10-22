@@ -278,6 +278,64 @@ function Effects.FloatText(position: Vector3, text: string, color: Color3, size:
 	end)
 end
 
+-- Sparkle bursts. One emitter per colour key so recolouring never repaints
+-- sparks that are already flying.
+local burstEmitters = {} -- [key] = { Part, Emitter }
+local MAX_EMITTERS = 32
+
+local function burstEmitter(key: string, color: Color3)
+	local existing = burstEmitters[key]
+	if existing and existing.Part.Parent then
+		return existing
+	end
+	local count = 0
+	for _ in burstEmitters do
+		count += 1
+	end
+	if count >= MAX_EMITTERS then
+		return nil
+	end
+
+	local holder = Instance.new("Part")
+	holder.Name = "SlingBurst"
+	holder.Anchored = true
+	holder.CanCollide = false
+	holder.CanQuery = false
+	holder.CanTouch = false
+	holder.Transparency = 1
+	holder.Size = Vector3.new(1, 1, 1)
+	holder.Parent = Workspace
+
+	local emitter = Instance.new("ParticleEmitter")
+	emitter.Rate = 0
+	emitter.Lifetime = NumberRange.new(0.35, 0.7)
+	emitter.Speed = NumberRange.new(16, 34)
+	emitter.SpreadAngle = Vector2.new(180, 180)
+	emitter.Drag = 3
+	emitter.Acceleration = Vector3.new(0, -40, 0)
+	emitter.Size = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 1),
+		NumberSequenceKeypoint.new(1, 0),
+	})
+	emitter.Transparency = NumberSequence.new(0, 0.4)
+	emitter.LightEmission = 0.7
+	emitter.Color = ColorSequence.new(color)
+	emitter.Parent = holder
+
+	local entry = { Part = holder, Emitter = emitter }
+	burstEmitters[key] = entry
+	return entry
+end
+
+function Effects.Burst(position: Vector3, key: string, color: Color3, amount: number)
+	local entry = burstEmitter(key, color)
+	if not entry then
+		return
+	end
+	entry.Part.CFrame = CFrame.new(position)
+	entry.Emitter:Emit(amount)
+end
+
 -- Client-side explosion: purely visual, never hurts anyone.
 function Effects.Explosion(position: Vector3, radius: number)
 	local explosion = Instance.new("Explosion")

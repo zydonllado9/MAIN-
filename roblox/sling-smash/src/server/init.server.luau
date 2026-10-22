@@ -12,8 +12,12 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared:WaitForChild("Config"))
 local CourseLayout = require(Shared:WaitForChild("CourseLayout"))
+local Daily = require(Shared:WaitForChild("Daily"))
+local Index = require(Shared:WaitForChild("Index"))
 
+local Codes = require(script.Codes)
 local DataService = require(script.DataService)
+local Leaderboard = require(script.Leaderboard)
 local WorldBuilder = require(script.WorldBuilder)
 
 Players.CharacterAutoLoads = false
@@ -60,6 +64,8 @@ local Rebirth = remote("RemoteFunction", "Rebirth") :: RemoteFunction
 local BuyTrail = remote("RemoteFunction", "BuyTrail") :: RemoteFunction
 local EquipTrail = remote("RemoteFunction", "EquipTrail") :: RemoteFunction
 local UpdateSetting = remote("RemoteEvent", "UpdateSetting") :: RemoteEvent
+local ClaimDaily = remote("RemoteFunction", "ClaimDaily") :: RemoteFunction
+local RedeemCode = remote("RemoteFunction", "RedeemCode") :: RemoteFunction
 
 remotes.Parent = ReplicatedStorage
 
@@ -67,9 +73,18 @@ remotes.Parent = ReplicatedStorage
 -- World
 --------------------------------------------------------------------------------
 
-WorldBuilder.Build()
+local map = WorldBuilder.Build()
+
+Leaderboard.Init(map, function(player)
+	local data = DataService.Get(player)
+	return if data then data.BestDistance else 0
+end)
 
 local layout = CourseLayout.Get()
+local layoutKinds = { Block = 0, Gold = 0, TNT = 0 }
+for _, block in layout.Blocks do
+	layoutKinds[block.Kind] = (layoutKinds[block.Kind] or 0) + 1
+end
 
 --------------------------------------------------------------------------------
 -- Characters + trails
@@ -173,7 +188,11 @@ local function onPlayerAdded(player: Player)
 		onCharacterAdded(player, character)
 	end)
 
-	DataService.Load(player)
+	local data = DataService.Load(player)
+	if data then
+		-- Seed the global board with bests from before it existed.
+		Leaderboard.Submit(player, data.BestDistance)
+	end
 	spawnCharacter(player)
 end
 
@@ -187,7 +206,17 @@ Players.PlayerRemoving:Connect(function(player)
 end)
 
 game:BindToClose(function()
+	-- Write leaderboard bests and player data in parallel, and wait for both.
+	local flushed = false
+	task.spawn(function()
+		Leaderboard.Flush()
+		flushed = true
+	end)
 	DataService.SaveAll()
+	local deadline = os.clock() + 20
+	while not flushed and os.clock() < deadline do
+		task.wait(0.1)
+	end
 end)
 
 task.spawn(function()
@@ -252,6 +281,9 @@ FinishLaunch.OnServerInvoke = function(player, launchId, report)
 	local maxSmashes = math.min(layout.TotalBlocks, math.floor(60 + elapsed * 30))
 	local smashes = math.clamp(math.floor(safeNumber(report.Smashes)), 0, maxSmashes)
 	local stars = math.clamp(math.floor(safeNumber(report.Stars)), 0, #layout.Stars)
+	local rings = math.clamp(math.floor(safeNumber(report.Rings)), 0, #layout.Rings)
+	local gold = math.clamp(math.floor(safeNumber(report.Gold)), 0, math.min(smashes, layoutKinds.Gold))
+	local tnt = math.clamp(math.floor(safeNumber(report.TNT)), 0, math.min(smashes, layoutKinds.TNT))
 	local maxCombo = math.clamp(math.floor(safeNumber(report.MaxCombo)), 0, smashes)
 
 	local maxZoneMult = Config.Zones[#Config.Zones].ValueMult
@@ -263,10 +295,30 @@ FinishLaunch.OnServerInvoke = function(player, launchId, report)
 	local distanceCoins = math.floor(distance * Config.CoinsPerStud * stats.CoinMult)
 	local earned = runCoins + distanceCoins
 
+	-- Index discoveries pay a one-time bonus on top of the launch.
+	local discoveries = {}
+	local discoveryCoins = 0
+	local summary = {
+		Distance = distance,
+		Smashes = smashes,
+		Stars = stars,
+		Rings = rings,
+		Gold = gold,
+		TNT = tnt,
+		MaxCombo = maxCombo,
+	}
+	for _, entry in Index.Evaluate(summary, data.Index) do
+		data.Index[entry.Id] = true
+		discoveryCoins += entry.Reward
+		table.insert(discoveries, { Id = entry.Id, Name = entry.Name, Icon = entry.Icon, Reward = entry.Reward })
+	end
+	earned += discoveryCoins
+
 	local newBest = distance > data.BestDistance
 	data.Coins += earned
 	if newBest then
 		data.BestDistance = math.floor(distance)
+		Leaderboard.Submit(player, data.BestDistance)
 	end
 	data.Stats.Launches += 1
 	data.Stats.TotalSmashes += smashes
@@ -286,6 +338,8 @@ FinishLaunch.OnServerInvoke = function(player, launchId, report)
 		Stars = stars,
 		NewBest = newBest,
 		Best = data.BestDistance,
+		Discoveries = discoveries,
+		DiscoveryCoins = discoveryCoins,
 	}
 end
 
@@ -359,6 +413,54 @@ EquipTrail.OnServerInvoke = function(player, trailId)
 	DataService.Changed(player)
 	applyTrail(player)
 	return true
+end
+
+ClaimDaily.OnServerInvoke = function(player)
+	local data = DataService.Get(player)
+	if not data then
+		return false, "Data not loaded"
+	end
+	local now = os.time()
+	local canClaim, streak = Daily.Status(data.Daily, now)
+	if not canClaim then
+		return false, "Already claimed today"
+	end
+	local reward = Daily.Reward(streak, data.Rebirths)
+	data.Daily.Day = Daily.DayNumber(now)
+	data.Daily.Streak = streak
+	data.Coins += reward
+	DataService.Changed(player)
+	return true, reward
+end
+
+local lastCodeAttempt = {} -- [Player] = os.clock()
+Players.PlayerRemoving:Connect(function(player)
+	lastCodeAttempt[player] = nil
+end)
+
+RedeemCode.OnServerInvoke = function(player, text)
+	local data = DataService.Get(player)
+	if not data then
+		return false, "Data not loaded"
+	end
+	local now = os.clock()
+	if lastCodeAttempt[player] and now - lastCodeAttempt[player] < 1 then
+		return false, "Slow down!"
+	end
+	lastCodeAttempt[player] = now
+
+	local code = Config.NormalizeCode(text)
+	local reward = code and Codes[code]
+	if not code or not reward then
+		return false, "That code doesn't exist"
+	end
+	if data.Codes[code] then
+		return false, "You already used that code"
+	end
+	data.Codes[code] = true
+	data.Coins += reward
+	DataService.Changed(player)
+	return true, reward
 end
 
 UpdateSetting.OnServerEvent:Connect(function(player, key, value)

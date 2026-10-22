@@ -7,9 +7,12 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
 
 local Config = require(ReplicatedStorage.Shared.Config)
+local Daily = require(ReplicatedStorage.Shared.Daily)
 local Format = require(ReplicatedStorage.Shared.Format)
+local Index = require(ReplicatedStorage.Shared.Index)
 local UpgradeTree = require(script.Parent.UpgradeTree)
 local Widgets = require(script.Parent.Widgets)
 
@@ -26,6 +29,11 @@ local panels = {} -- [name] = Frame
 local settingButtons = {} -- [key] = { Button, Label }
 local shopRows = {} -- [trailId] = { Button, Label, Price }
 local statLabels = {} -- [key] = TextLabel
+local indexCards = {} -- [entryId] = { Card, Icon, Name, Detail, Stroke }
+local dailyCards = {} -- [day] = { Card, Stroke, Label }
+local dailyRefs: { [string]: any } = {}
+local codeRefs: { [string]: any } = {}
+local dailyPrompted = false
 local rebirthRefs: { [string]: any } = {}
 
 local displayedRunCoins = 0
@@ -88,11 +96,30 @@ local function buildLobby()
 		UI.OpenPanel("Upgrades")
 	end)
 
+	-- Tutorial pointers for new players (bounced in UI.Init's render loop).
+	local function pointer(name: string, text: string, x: number): TextLabel
+		local label = Widgets.Label({
+			Name = name,
+			Text = text,
+			AnchorPoint = Vector2.new(0.5, 0),
+			Position = UDim2.new(0, x, 1, 10),
+			Size = UDim2.fromOffset(220, 40),
+			TextColor3 = C.Header,
+			StrokeThickness = 3,
+			Visible = false,
+			ZIndex = 5,
+			Parent = top,
+		})
+		return label
+	end
+	refs.LaunchPointer = pointer("LaunchPointer", "👆 START HERE!", 106)
+	refs.UpgradePointer = pointer("UpgradePointer", "👆 SPEND YOUR ⭐!", 334)
+
 	local menu = Widgets.new("Frame", {
 		Name = "SideMenu",
 		AnchorPoint = Vector2.new(0, 0.5),
 		Position = UDim2.new(0, 12, 0.5, 0),
-		Size = UDim2.fromOffset(190, 296),
+		Size = UDim2.fromOffset(190, 396),
 		BackgroundTransparency = 1,
 		Parent = gui,
 	})
@@ -109,7 +136,9 @@ local function buildLobby()
 		{ "Shop", "🛒", "Shop" },
 		{ "Upgrades", "⬆️", "Upgrades" },
 		{ "Rebirth", "🔄", "Rebirth" },
-		{ "Index", "📖", nil },
+		{ "Index", "📖", "Index" },
+		{ "Daily", "🎁", "Daily" },
+		{ "Codes", "🎟️", "Codes" },
 		{ "Stats", "📊", "Stats" },
 		{ "Settings", "⚙️", "Settings" },
 	}
@@ -309,7 +338,7 @@ local function buildRunHud()
 		Name = "Hint",
 		AnchorPoint = Vector2.new(0.5, 1),
 		Position = UDim2.new(0.5, 0, 1, -18),
-		Size = UDim2.fromOffset(340, 48),
+		Size = UDim2.fromOffset(460, 48),
 		Visible = false,
 		Parent = gui,
 	})
@@ -322,6 +351,63 @@ local function buildRunHud()
 		Parent = hint,
 	})
 	refs.Hint = hint
+
+	-- Round BOOST button (essential on phones, handy everywhere).
+	local boost = Widgets.new("TextButton", {
+		Name = "Boost",
+		Text = "",
+		AutoButtonColor = false,
+		AnchorPoint = Vector2.new(1, 1),
+		Position = UDim2.new(1, -24, 1, -24),
+		Size = UDim2.fromOffset(124, 124),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		Visible = false,
+		ZIndex = 6,
+		Parent = gui,
+	})
+	Widgets.Round(boost)
+	refs.BoostStroke = Widgets.Stroke(boost, Color3.fromRGB(110, 40, 0), 4)
+	refs.BoostGradient = Widgets.Gradient(boost, Color3.fromRGB(255, 190, 60), Color3.fromRGB(240, 90, 30))
+	Widgets.AutoScale(boost)
+	Widgets.Label({
+		Text = "🚀",
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 14),
+		Size = UDim2.fromOffset(56, 56),
+		StrokeThickness = 0,
+		ZIndex = 7,
+		Parent = boost,
+	})
+	Widgets.Label({
+		Text = "BOOST",
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 1, -16),
+		Size = UDim2.fromOffset(90, 26),
+		ZIndex = 7,
+		Parent = boost,
+	})
+	local count = Widgets.new("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(1, -14, 0, 14),
+		Size = UDim2.fromOffset(40, 40),
+		BackgroundColor3 = C.Dark,
+		ZIndex = 8,
+		Parent = boost,
+	})
+	Widgets.Round(count)
+	Widgets.Stroke(count, Color3.new(1, 1, 1), 2)
+	refs.BoostCount = Widgets.Label({
+		Text = "1",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromScale(0.7, 0.7),
+		ZIndex = 9,
+		Parent = count,
+	})
+	boost.Activated:Connect(function()
+		actions.Boost()
+	end)
+	refs.Boost = boost
 
 	-- Power bar. The whole panel is a button so phones can press and hold it.
 	local power = Widgets.new("TextButton", {
@@ -494,7 +580,7 @@ local function statBox(parent: Instance, x: number, icon: string): TextLabel
 end
 
 local function buildResults()
-	local panel, content, close = Widgets.Panel(gui, "🏆 Launch Complete!", Vector2.new(470, 440))
+	local panel, content, close = Widgets.Panel(gui, "🏆 Launch Complete!", Vector2.new(470, 480))
 	panels.Results = panel
 	close.Activated:Connect(function()
 		actions.Return()
@@ -546,6 +632,18 @@ local function buildResults()
 	refs.ResultDistance = statBox(row, 0, "🏁")
 	refs.ResultSmashes = statBox(row, 144, "🔨")
 	refs.ResultCombo = statBox(row, 288, "🔥")
+
+	refs.ResultDiscoveries = Widgets.Label({
+		Text = "",
+		Position = UDim2.fromOffset(0, 238),
+		Size = UDim2.new(1, 0, 0, 48),
+		TextWrapped = true,
+		TextColor3 = Color3.fromRGB(130, 230, 255),
+		MaxTextSize = 22,
+		Visible = false,
+		ZIndex = 22,
+		Parent = content,
+	})
 
 	local retry = Widgets.Button({
 		Text = "Retry",
@@ -785,10 +883,11 @@ local STAT_ROWS = {
 	{ "StarsCollected", "⭐ Stars Collected" },
 	{ "TotalCoins", "💰 Coins Earned" },
 	{ "Rebirths", "🔄 Rebirths" },
+	{ "Index", "📖 Index Found" },
 }
 
 local function buildStats()
-	local panel, content, close = Widgets.Panel(gui, "📊 Stats", Vector2.new(460, 500))
+	local panel, content, close = Widgets.Panel(gui, "📊 Stats", Vector2.new(460, 556))
 	panels.Stats = panel
 	close.Activated:Connect(UI.ClosePanels)
 	Widgets.new("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = content })
@@ -835,6 +934,7 @@ local function refreshStats()
 		StarsCollected = Format.Commas(data.Stats.StarsCollected),
 		TotalCoins = Format.Coins(data.Stats.TotalCoins),
 		Rebirths = tostring(data.Rebirths),
+		Index = Index.Count(data.Index or {}) .. " / " .. #Index.Entries,
 	}
 	for key, label in statLabels do
 		label.Text = values[key] or "0"
@@ -893,6 +993,313 @@ local function refreshSettings()
 end
 
 --------------------------------------------------------------------------------
+-- Index (collection book)
+--------------------------------------------------------------------------------
+
+local function buildIndex()
+	local panel, content, close = Widgets.Panel(gui, "📖 Index", Vector2.new(600, 540))
+	panels.Index = panel
+	close.Activated:Connect(UI.ClosePanels)
+
+	refs.IndexProgress = Widgets.Label({
+		Text = "Discovered 0 / " .. #Index.Entries,
+		Size = UDim2.new(1, 0, 0, 30),
+		TextColor3 = C.Header,
+		ZIndex = 22,
+		Parent = content,
+	})
+
+	local list = Widgets.new("ScrollingFrame", {
+		Position = UDim2.fromOffset(0, 40),
+		Size = UDim2.new(1, 0, 1, -40),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ScrollBarThickness = 8,
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		CanvasSize = UDim2.new(),
+		ZIndex = 22,
+		Parent = content,
+	})
+	Widgets.new("UIGridLayout", {
+		CellSize = UDim2.fromOffset(170, 132),
+		CellPadding = UDim2.fromOffset(10, 10),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		Parent = list,
+	})
+
+	for order, entry in Index.Entries do
+		local card = Widgets.new("Frame", {
+			Name = entry.Id,
+			BackgroundColor3 = C.PanelDark,
+			LayoutOrder = order,
+			ZIndex = 22,
+			Parent = list,
+		})
+		Widgets.Corner(card, 12)
+		local stroke = Widgets.Stroke(card, C.PanelStroke, 3)
+		local icon = Widgets.Label({
+			Text = entry.Icon,
+			AnchorPoint = Vector2.new(0.5, 0),
+			Position = UDim2.new(0.5, 0, 0, 6),
+			Size = UDim2.fromOffset(48, 48),
+			StrokeThickness = 0,
+			ZIndex = 23,
+			Parent = card,
+		})
+		local name = Widgets.Label({
+			Text = entry.Name,
+			Position = UDim2.fromOffset(6, 56),
+			Size = UDim2.new(1, -12, 0, 26),
+			ZIndex = 23,
+			Parent = card,
+		})
+		local detail = Widgets.Label({
+			Text = entry.Hint,
+			Position = UDim2.fromOffset(6, 84),
+			Size = UDim2.new(1, -12, 0, 40),
+			TextWrapped = true,
+			TextColor3 = Color3.fromRGB(255, 226, 190),
+			StrokeThickness = 0,
+			MaxTextSize = 16,
+			ZIndex = 23,
+			Parent = card,
+		})
+		indexCards[entry.Id] = { Icon = icon, Name = name, Detail = detail, Stroke = stroke }
+	end
+end
+
+local function refreshIndex()
+	if not data then
+		return
+	end
+	local discovered = data.Index or {}
+	refs.IndexProgress.Text = string.format("Discovered %d / %d", Index.Count(discovered), #Index.Entries)
+	for _, entry in Index.Entries do
+		local card = indexCards[entry.Id]
+		local found = discovered[entry.Id] == true
+		card.Icon.Text = if found then entry.Icon else "❓"
+		card.Icon.TextTransparency = 0
+		card.Name.TextColor3 = if found then Color3.new(1, 1, 1) else Color3.fromRGB(190, 170, 150)
+		card.Detail.Text = if found
+			then "✅ Found! +" .. Format.Short(entry.Reward)
+			else entry.Hint .. "\n⭐ " .. Format.Short(entry.Reward)
+		card.Stroke.Color = if found then Color3.fromRGB(120, 255, 90) else C.PanelStroke
+	end
+end
+
+--------------------------------------------------------------------------------
+-- Daily reward
+--------------------------------------------------------------------------------
+
+local function formatWait(seconds: number): string
+	local hours = math.floor(seconds / 3600)
+	local minutes = math.floor((seconds % 3600) / 60)
+	if hours > 0 then
+		return string.format("%dh %dm", hours, minutes)
+	end
+	return string.format("%dm %ds", minutes, math.floor(seconds % 60))
+end
+
+local function buildDaily()
+	local panel, content, close = Widgets.Panel(gui, "🎁 Daily Reward", Vector2.new(580, 380))
+	panels.Daily = panel
+	close.Activated:Connect(UI.ClosePanels)
+
+	Widgets.Label({
+		Text = "Come back every day for bigger rewards!",
+		Size = UDim2.new(1, 0, 0, 28),
+		TextColor3 = Color3.fromRGB(255, 230, 190),
+		ZIndex = 22,
+		Parent = content,
+	})
+
+	local row = Widgets.new("Frame", {
+		Position = UDim2.fromOffset(0, 40),
+		Size = UDim2.new(1, 0, 0, 110),
+		BackgroundTransparency = 1,
+		ZIndex = 22,
+		Parent = content,
+	})
+	Widgets.new("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		HorizontalAlignment = Enum.HorizontalAlignment.Center,
+		Padding = UDim.new(0, 8),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		Parent = row,
+	})
+	for day = 1, #Daily.Rewards do
+		local card = Widgets.new("Frame", {
+			Size = UDim2.fromOffset(68, 106),
+			BackgroundColor3 = C.PanelDark,
+			LayoutOrder = day,
+			ZIndex = 22,
+			Parent = row,
+		})
+		Widgets.Corner(card, 10)
+		local stroke = Widgets.Stroke(card, C.PanelStroke, 3)
+		Widgets.Label({
+			Text = "Day " .. day,
+			Position = UDim2.fromOffset(4, 6),
+			Size = UDim2.new(1, -8, 0, 22),
+			ZIndex = 23,
+			Parent = card,
+		})
+		Widgets.Label({
+			Text = if day == #Daily.Rewards then "💎" else "⭐",
+			AnchorPoint = Vector2.new(0.5, 0),
+			Position = UDim2.new(0.5, 0, 0, 30),
+			Size = UDim2.fromOffset(36, 36),
+			StrokeThickness = 0,
+			ZIndex = 23,
+			Parent = card,
+		})
+		local label = Widgets.Label({
+			Text = Format.Short(Daily.Rewards[day]),
+			Position = UDim2.fromOffset(4, 72),
+			Size = UDim2.new(1, -8, 0, 26),
+			TextColor3 = C.Coin,
+			ZIndex = 23,
+			Parent = card,
+		})
+		dailyCards[day] = { Stroke = stroke, Label = label }
+	end
+
+	dailyRefs.Status = Widgets.Label({
+		Text = "",
+		Position = UDim2.fromOffset(0, 160),
+		Size = UDim2.new(1, 0, 0, 28),
+		TextColor3 = Color3.fromRGB(140, 255, 100),
+		ZIndex = 22,
+		Parent = content,
+	})
+	local button, label = Widgets.Button({
+		Text = "Claim",
+		Color = C.Green,
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 1, 0),
+		Size = UDim2.fromOffset(280, 68),
+		ZIndex = 22,
+		Parent = content,
+	})
+	dailyRefs.Button = button
+	dailyRefs.ButtonLabel = label
+	button.Activated:Connect(function()
+		actions.ClaimDaily()
+	end)
+end
+
+local function refreshDaily()
+	if not data then
+		return
+	end
+	-- Use the server's clock: the server decides whether a claim is allowed.
+	local canClaim, streak, wait = Daily.Status(data.Daily, Workspace:GetServerTimeNow())
+	local highlight = math.clamp(streak, 1, #Daily.Rewards)
+	for day, card in dailyCards do
+		card.Label.Text = Format.Short(Daily.Reward(day, data.Rebirths))
+		if day == highlight then
+			card.Stroke.Color = if canClaim then C.Header else Color3.fromRGB(120, 255, 90)
+			card.Stroke.Thickness = 4
+		elseif day < highlight then
+			card.Stroke.Color = Color3.fromRGB(120, 255, 90)
+			card.Stroke.Thickness = 3
+		else
+			card.Stroke.Color = C.PanelStroke
+			card.Stroke.Thickness = 3
+		end
+	end
+	if canClaim then
+		dailyRefs.Status.Text = "Day " .. streak .. " reward is ready!"
+		dailyRefs.ButtonLabel.Text = "Claim ⭐ " .. Format.Coins(Daily.Reward(streak, data.Rebirths))
+		Widgets.SetButtonColor(dailyRefs.Button, C.Green)
+	else
+		dailyRefs.Status.Text = "Streak: " .. streak .. " day" .. (if streak == 1 then "" else "s") .. " 🔥"
+		dailyRefs.ButtonLabel.Text = "Next in " .. formatWait(wait)
+		Widgets.SetButtonColor(dailyRefs.Button, C.Grey)
+	end
+	refs.DailyBadge.Visible = canClaim
+end
+
+--------------------------------------------------------------------------------
+-- Codes
+--------------------------------------------------------------------------------
+
+local function buildCodes()
+	local panel, content, close = Widgets.Panel(gui, "🎟️ Codes", Vector2.new(460, 330))
+	panels.Codes = panel
+	close.Activated:Connect(UI.ClosePanels)
+
+	Widgets.Label({
+		Text = "Got a code? Type it here!",
+		Size = UDim2.new(1, 0, 0, 30),
+		ZIndex = 22,
+		Parent = content,
+	})
+	local box = Widgets.new("TextBox", {
+		Position = UDim2.fromOffset(0, 42),
+		Size = UDim2.new(1, 0, 0, 56),
+		BackgroundColor3 = Color3.fromRGB(250, 244, 230),
+		ClearTextOnFocus = false,
+		Font = Widgets.Font,
+		PlaceholderText = "Type a code...",
+		PlaceholderColor3 = Color3.fromRGB(150, 130, 110),
+		Text = "",
+		TextColor3 = Color3.fromRGB(40, 26, 16),
+		TextScaled = true,
+		ZIndex = 22,
+		Parent = content,
+	})
+	Widgets.Corner(box, 12)
+	Widgets.Stroke(box, C.PanelStroke, 3)
+	Widgets.new("UIPadding", {
+		PaddingLeft = UDim.new(0, 14),
+		PaddingRight = UDim.new(0, 14),
+		PaddingTop = UDim.new(0, 10),
+		PaddingBottom = UDim.new(0, 10),
+		Parent = box,
+	})
+	codeRefs.Box = box
+	codeRefs.Result = Widgets.Label({
+		Text = "Hint: try LAUNCH",
+		Position = UDim2.fromOffset(0, 108),
+		Size = UDim2.new(1, 0, 0, 28),
+		TextColor3 = Color3.fromRGB(255, 226, 190),
+		ZIndex = 22,
+		Parent = content,
+	})
+	local button = Widgets.Button({
+		Text = "Redeem",
+		Color = C.Green,
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 1, 0),
+		Size = UDim2.fromOffset(240, 64),
+		ZIndex = 22,
+		Parent = content,
+	})
+	local function submit()
+		local text = box.Text
+		if text ~= "" then
+			actions.RedeemCode(text)
+		end
+	end
+	button.Activated:Connect(submit)
+	box.FocusLost:Connect(function(enterPressed)
+		if enterPressed then
+			submit()
+		end
+	end)
+end
+
+-- Shows the outcome of a code redemption under the text box.
+function UI.CodeResult(ok: boolean, message: string)
+	codeRefs.Result.Text = message
+	codeRefs.Result.TextColor3 = if ok then Color3.fromRGB(140, 255, 100) else Color3.fromRGB(255, 130, 120)
+	if ok then
+		codeRefs.Box.Text = ""
+	end
+end
+
+--------------------------------------------------------------------------------
 -- Public API
 --------------------------------------------------------------------------------
 
@@ -915,6 +1322,9 @@ function UI.Init(playerGui: PlayerGui, callbacks)
 	buildRebirth()
 	buildStats()
 	buildSettings()
+	buildIndex()
+	buildDaily()
+	buildCodes()
 	UpgradeTree.Init(gui, function(nodeId)
 		actions.BuyUpgrade(nodeId)
 	end)
@@ -932,6 +1342,20 @@ function UI.Init(playerGui: PlayerGui, callbacks)
 		end
 		if refs.PowerGradient then
 			refs.PowerGradient.Offset = Vector2.new(math.sin(os.clock() * 2) * 0.1, 0)
+		end
+		-- Bounce the tutorial pointers.
+		local bounce = math.abs(math.sin(os.clock() * 4)) * 8
+		refs.LaunchPointer.Position = UDim2.new(0, 106, 1, 10 + bounce)
+		refs.UpgradePointer.Position = UDim2.new(0, 334, 1, 10 + bounce)
+	end)
+
+	-- Keep the daily countdown ticking while its panel is open.
+	task.spawn(function()
+		while true do
+			task.wait(1)
+			if panels.Daily.Visible then
+				refreshDaily()
+			end
 		end
 	end)
 
@@ -960,7 +1384,39 @@ function UI.SetData(newData)
 	refreshRebirth()
 	refreshStats()
 	refreshSettings()
+	refreshIndex()
+	refreshDaily()
 	UI.RefreshHint()
+	UI.RefreshPointers()
+
+	-- Greet returning players with their daily reward, once per session.
+	if not dailyPrompted and Daily.Status(data.Daily, Workspace:GetServerTimeNow()) then
+		dailyPrompted = true
+		task.delay(1.5, function()
+			if mode == "Lobby" and not UpgradeTree.IsOpen() then
+				local anyOpen = false
+				for name, panel in panels do
+					if name ~= "Results" and panel.Visible then
+						anyOpen = true
+					end
+				end
+				if not anyOpen then
+					UI.OpenPanel("Daily")
+				end
+			end
+		end)
+	end
+end
+
+-- Pointers for brand-new players: first press Launch, then buy an upgrade.
+function UI.RefreshPointers()
+	local launches = if data then data.Stats.Launches else 0
+	local ownsUpgrade = data ~= nil and next(data.Upgrades) ~= nil
+	refs.LaunchPointer.Visible = mode == "Lobby" and data ~= nil and launches == 0
+	refs.UpgradePointer.Visible = mode == "Lobby"
+		and launches > 0
+		and not ownsUpgrade
+		and UpgradeTree.HasAffordable(data)
 end
 
 function UI.ClosePanels()
@@ -1003,17 +1459,29 @@ function UI.SetMode(newMode: string)
 	refs.Distance.Visible = flying or results
 	refs.Power.Visible = aiming
 	refs.Combo.Visible = false
+	refs.Boost.Visible = flying
 	panels.Results.Visible = false
 	if not lobby then
 		UI.ClosePanels()
 	end
 	UI.RefreshHint()
+	UI.RefreshPointers()
 end
 
 function UI.RefreshHint()
 	local showHints = data == nil or data.Settings.Hints ~= false
 	refs.Hint.Visible = mode == "Flying" and showHints
-	refs.HintLabel.Text = if isTouchOnly() then "USE THE STICK TO STEER" else "A / D TO STEER"
+	refs.HintLabel.Text = if isTouchOnly()
+		then "STICK TO STEER • TAP 🚀 TO BOOST"
+		else "A / D TO STEER • CLICK TO BOOST"
+end
+
+-- Shows how many mid-air boosts are left.
+function UI.SetBoosts(left: number)
+	refs.BoostCount.Text = tostring(left)
+	local color = if left > 0 then Color3.fromRGB(255, 190, 60) else Color3.fromRGB(130, 130, 140)
+	local dark = if left > 0 then Color3.fromRGB(240, 90, 30) else Color3.fromRGB(80, 80, 90)
+	refs.BoostGradient.Color = ColorSequence.new(color, dark)
 end
 
 -- stateName: "aim" | "charging"
@@ -1116,26 +1584,99 @@ function UI.Toast(text: string, color: Color3?)
 	end)
 end
 
+local resultToken = 0
+
 function UI.ShowResults(result, comboMultiplier: number)
+	resultToken += 1
+	local token = resultToken
 	local panel = panels.Results
 	refs.ResultTitle.Text = if result.NewBest then "NEW BEST!" else "NICE LAUNCH!"
 	refs.ResultGradient.Enabled = result.NewBest == true
 	refs.ResultTitle.TextColor3 = if result.NewBest then Color3.new(1, 1, 1) else C.Header
-	refs.ResultEarned.Text = "⭐ +" .. Format.Commas(result.Earned or 0)
 	if result.Failed then
 		refs.ResultBreakdown.Text = "Server didn't respond - nothing was saved"
 	else
-		refs.ResultBreakdown.Text = string.format(
-			"Smashing ⭐ %s  •  Distance ⭐ %s",
-			Format.Short(result.RunCoins or 0),
-			Format.Short(result.DistanceCoins or 0)
-		)
+		local parts = {
+			"Smashing ⭐ " .. Format.Short(result.RunCoins or 0),
+			"Distance ⭐ " .. Format.Short(result.DistanceCoins or 0),
+		}
+		if (result.DiscoveryCoins or 0) > 0 then
+			table.insert(parts, "Index ⭐ " .. Format.Short(result.DiscoveryCoins))
+		end
+		refs.ResultBreakdown.Text = table.concat(parts, "  •  ")
 	end
+
+	local found = {}
+	for _, entry in result.Discoveries or {} do
+		table.insert(found, string.format("%s %s (+%s)", entry.Icon, entry.Name, Format.Short(entry.Reward)))
+	end
+	refs.ResultDiscoveries.Visible = #found > 0
+	refs.ResultDiscoveries.Text = "📖 NEW: " .. table.concat(found, "   ")
+
 	refs.ResultDistance.Text = Format.Commas(result.Distance or 0)
 	refs.ResultSmashes.Text = Format.Commas(result.Smashes or 0)
 	refs.ResultCombo.Text = "x" .. comboMultiplier
 	panel.Visible = true
 	Widgets.PopIn(panel)
+
+	-- Count the earned coins up instead of showing them all at once.
+	local earned = result.Earned or 0
+	local start = os.clock()
+	local duration = math.clamp(0.4 + earned / 20000, 0.4, 1.2)
+	refs.ResultEarned.Text = "⭐ +0"
+	task.spawn(function()
+		while token == resultToken do
+			local alpha = math.min(1, (os.clock() - start) / duration)
+			local eased = 1 - (1 - alpha) ^ 3
+			refs.ResultEarned.Text = "⭐ +" .. Format.Commas(math.floor(earned * eased + 0.5))
+			if alpha >= 1 then
+				break
+			end
+			task.wait()
+		end
+	end)
+
+	if result.NewBest then
+		UI.Confetti()
+	end
+end
+
+-- A burst of falling confetti across the whole screen.
+function UI.Confetti()
+	local colors = {
+		Color3.fromRGB(255, 90, 90),
+		Color3.fromRGB(255, 210, 60),
+		Color3.fromRGB(90, 220, 110),
+		Color3.fromRGB(70, 180, 255),
+		Color3.fromRGB(200, 110, 255),
+	}
+	local layer = Widgets.new("Frame", {
+		Name = "Confetti",
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		ZIndex = 70,
+		Parent = gui,
+	})
+	for i = 1, 60 do
+		local piece = Widgets.new("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.new(math.random(), 0, 0, -20 - math.random(0, 120)),
+			Size = UDim2.fromOffset(math.random(8, 14), math.random(14, 22)),
+			Rotation = math.random(0, 360),
+			BackgroundColor3 = colors[(i % #colors) + 1],
+			BorderSizePixel = 0,
+			ZIndex = 71,
+			Parent = layer,
+		})
+		local fall = TweenInfo.new(1.6 + math.random() * 1.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+		TweenService:Create(piece, fall, {
+			Position = UDim2.new(piece.Position.X.Scale + (math.random() - 0.5) * 0.2, 0, 1, 40),
+			Rotation = piece.Rotation + math.random(-540, 540),
+		}):Play()
+	end
+	task.delay(3.2, function()
+		layer:Destroy()
+	end)
 end
 
 function UI.HideResults()

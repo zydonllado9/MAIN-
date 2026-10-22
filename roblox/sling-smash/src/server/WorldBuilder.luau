@@ -294,14 +294,22 @@ local function buildSlingshot(map: Folder)
 		})
 	end
 
-	-- Trunk.
-	part({
+	-- Trunk, with an "E to launch" prompt for players who walk up to it.
+	local trunk = part({
 		Name = "Trunk",
 		Size = Vector3.new(2.2, 6, 2.2),
 		CFrame = CFrame.new(base + Vector3.new(0, 3.5, 0)),
 		Color = wood,
 		Parent = model,
 	})
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "SlingLaunchPrompt"
+	prompt.ActionText = "Launch"
+	prompt.ObjectText = "Slingshot"
+	prompt.HoldDuration = 0
+	prompt.MaxActivationDistance = 18
+	prompt.RequiresLineOfSight = false
+	prompt.Parent = trunk
 
 	-- Two arms angled 25 degrees outwards, with red caps.
 	local angle = math.rad(25)
@@ -357,6 +365,110 @@ local function buildSlingshot(map: Folder)
 	spawn.Duration = 0
 	spawn.Neutral = true
 	spawn.Parent = map
+end
+
+--------------------------------------------------------------------------------
+-- How to play sign
+--------------------------------------------------------------------------------
+
+local HOW_TO_PLAY = {
+	"1. Press 🎯 LAUNCH (or E at the slingshot)",
+	"2. HOLD to charge, RELEASE to fly",
+	"3. Steer with A / D or the stick",
+	"4. CLICK or SPACE in the air to 🚀 BOOST",
+	"5. Smash blocks, TNT and stars for ⭐",
+	"6. Buy ⬆️ UPGRADES and fly further!",
+}
+
+-- A signboard on two golden posts, turned to face the lobby spawn. Returns the
+-- board part and a SurfaceGui with padding and a vertical list layout.
+function WorldBuilder.Signboard(parent: Instance, name: string, position: Vector3, size: Vector2, spacing: number?)
+	local spawn = Config.LobbySpawn
+	local lift = 3 -- gap between the ground and the bottom of the board
+	local center = position + Vector3.new(0, lift + size.Y / 2, 0)
+
+	local model = Instance.new("Model")
+	model.Name = name
+	model.Parent = parent
+
+	local board = part({
+		Name = "Board",
+		Size = Vector3.new(size.X, size.Y, 1),
+		CFrame = CFrame.lookAt(center, Vector3.new(spawn.X, center.Y, spawn.Z)),
+		Color = Color3.fromRGB(70, 46, 32),
+		Parent = model,
+	})
+	local postHeight = lift + size.Y
+	for _, side in { -1, 1 } do
+		part({
+			Name = "Post",
+			Size = Vector3.new(1.4, postHeight, 1.4),
+			CFrame = board.CFrame * CFrame.new(side * (size.X / 2 + 0.7), postHeight / 2 - (lift + size.Y / 2), 0),
+			Color = Color3.fromRGB(255, 196, 40),
+			Parent = model,
+		})
+	end
+
+	local gui = Instance.new("SurfaceGui")
+	gui.Face = Enum.NormalId.Front -- lookAt points the front face at the spawn
+	gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	gui.PixelsPerStud = 25
+	gui.LightInfluence = 0
+	gui.Parent = board
+
+	local padding = Instance.new("UIPadding")
+	padding.PaddingTop = UDim.new(0, 16)
+	padding.PaddingBottom = UDim.new(0, 16)
+	padding.PaddingLeft = UDim.new(0, 22)
+	padding.PaddingRight = UDim.new(0, 22)
+	padding.Parent = gui
+
+	local list = Instance.new("UIListLayout")
+	list.SortOrder = Enum.SortOrder.LayoutOrder
+	list.Padding = UDim.new(0, spacing or 8)
+	list.Parent = gui
+
+	return board, gui
+end
+
+-- Outlined cartoon text for signboards.
+function WorldBuilder.SignLabel(props: { [string]: any }): TextLabel
+	local label = Instance.new("TextLabel")
+	label.BackgroundTransparency = 1
+	label.Font = Enum.Font.FredokaOne
+	label.TextScaled = true
+	label.TextColor3 = Color3.new(1, 1, 1)
+	for key, value in props do
+		if key ~= "Parent" then
+			(label :: any)[key] = value
+		end
+	end
+	local stroke = Instance.new("UIStroke")
+	stroke.Thickness = 2
+	stroke.Color = Color3.fromRGB(30, 18, 10)
+	stroke.Parent = label
+	label.Parent = props.Parent
+	return label
+end
+
+local function buildHowToPlay(map: Folder)
+	local _, gui = WorldBuilder.Signboard(map, "HowToPlay", Config.HowToPlayPosition, Vector2.new(20, 16))
+	WorldBuilder.SignLabel({
+		Text = "HOW TO PLAY",
+		Size = UDim2.new(1, 0, 0, 62),
+		TextColor3 = Color3.fromRGB(255, 214, 60),
+		LayoutOrder = 0,
+		Parent = gui,
+	})
+	for i, text in HOW_TO_PLAY do
+		WorldBuilder.SignLabel({
+			Text = text,
+			Size = UDim2.new(1, 0, 0, 40),
+			TextXAlignment = Enum.TextXAlignment.Left,
+			LayoutOrder = i,
+			Parent = gui,
+		})
+	end
 end
 
 --------------------------------------------------------------------------------
@@ -571,6 +683,7 @@ function WorldBuilder.Build()
 	buildGround(map)
 	buildLane(map)
 	buildSlingshot(map)
+	buildHowToPlay(map)
 	buildDecorations(map)
 
 	map.Parent = Workspace

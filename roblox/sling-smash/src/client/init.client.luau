@@ -11,8 +11,10 @@
 
 local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
+local ProximityPromptService = game:GetService("ProximityPromptService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local StarterGui = game:GetService("StarterGui")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
@@ -37,6 +39,7 @@ local UpdateSettingRemote = remotes:WaitForChild("UpdateSetting") :: RemoteEvent
 local HOLD_STEP = "SlingSmashHold"
 local FLIGHT_STEP = "SlingSmashFlight"
 local CHARGE_ACTION = "SlingSmashCharge"
+local BOOST_ACTION = "SlingSmashBoost"
 local SUBSTEP = 1 / 120
 
 local rng = Random.new()
@@ -162,6 +165,18 @@ local function restoreCamera()
 	cam.FieldOfView = 70
 end
 
+-- The player list covers the distance counter, so hide it while flying.
+local function setPlayerListVisible(visible: boolean)
+	pcall(function()
+		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList, visible)
+	end)
+end
+
+-- "Press E to launch" prompts only make sense while standing around.
+local function setPromptsEnabled(enabled: boolean)
+	ProximityPromptService.Enabled = enabled
+end
+
 local function pouchCFrame(amount: number): CFrame
 	local back = Config.PouchRestOffset + Config.PouchPullDistance * amount
 	local position = Config.SlingshotPosition + Vector3.new(0, Config.PouchHeight - amount * 1.2, back)
@@ -233,7 +248,7 @@ end
 -- Aiming + charging
 --------------------------------------------------------------------------------
 
-local enterAiming, startFlight, returnToLobby
+local enterAiming, startFlight, returnToLobby, boost
 
 local function aimCamera(amount: number, dt: number)
 	local pouch = pouchCFrame(amount).Position
@@ -329,6 +344,7 @@ enterAiming = function()
 	state = "Aiming"
 	power = 0
 	chargeInput = nil
+	setPromptsEnabled(false)
 	setBandsVisible(true)
 	bindStep(HOLD_STEP, holdStep)
 	ContextActionService:BindActionAtPriority(
@@ -356,11 +372,14 @@ local function cancelAim()
 end
 
 UserInputService.InputBegan:Connect(function(input, processed)
-	if processed or state ~= "Aiming" then
+	if processed or not isPointerInput(input) then
 		return
 	end
-	if isPointerInput(input) then
+	if state == "Aiming" then
 		startCharging(input)
+	elseif state == "Flying" and input.UserInputType == Enum.UserInputType.MouseButton1 then
+		-- Mouse clicks boost; phones use the BOOST button so stray taps don't waste charges.
+		boost()
 	end
 end)
 
@@ -405,7 +424,17 @@ local function registerSmash(f, entry)
 			* stats.CoinMult
 	)
 	f.RunCoins += coins
+	if entry.Data.Kind == "Gold" then
+		f.Gold += 1
+	elseif entry.Data.Kind == "TNT" then
+		f.TNT += 1
+	end
 
+	-- Gold and TNT always look the same; normal blocks vary by zone and colour.
+	local sparkKey = if entry.Data.Kind == "Block"
+		then "Block:" .. entry.Data.Zone .. ":" .. entry.Data.ColorIndex
+		else entry.Data.Kind
+	Effects.Burst(entry.Position, sparkKey, entry.Part.Color, if crit then 14 else 6)
 	Effects.Play("Smash", rng:NextNumber(0.85, 1.35), 0.05)
 	if crit then
 		UI.Pop("CRITICAL!", "crit")
@@ -441,6 +470,7 @@ local function explode(f, first)
 	f.Velocity = Vector3.new(f.Velocity.X, math.max(f.Velocity.Y, Config.Blocks.TNT.Lift), f.Velocity.Z)
 	f.Grounded = false
 	f.FovKick = 10
+	f.SlowMo = Config.SlowMo.Duration
 	Effects.Shake(2.2)
 	Effects.Flash(Color3.fromRGB(255, 170, 60), 0.35)
 	UI.Pop("BOOM!", "crit")
@@ -481,6 +511,7 @@ local function onRing(ring)
 		return
 	end
 	course:UseRing(ring)
+	f.Rings += 1
 	f.Velocity += Config.Forward * Config.RingBoost
 	f.Velocity = Vector3.new(f.Velocity.X, math.max(f.Velocity.Y, Config.RingLift), f.Velocity.Z)
 	f.Grounded = false
@@ -489,6 +520,26 @@ local function onRing(ring)
 	Effects.Flash(Color3.fromRGB(80, 230, 255), 0.3)
 	Effects.Play("Launch", 1.4)
 	Effects.Shake(0.8)
+end
+
+-- Mid-air rocket boost; limited charges per launch (Rocket Fuel adds more).
+boost = function()
+	local f = flight
+	if not f or f.Done or f.Boosts <= 0 or f.BoostCooldown > 0 then
+		return
+	end
+	f.Boosts -= 1
+	f.BoostCooldown = Config.Boost.Cooldown
+	f.Velocity += Config.Forward * Config.Boost.Forward
+	f.Velocity = Vector3.new(f.Velocity.X, math.max(f.Velocity.Y, Config.Boost.Lift), f.Velocity.Z)
+	f.Grounded = false
+	f.FovKick = 12
+	UI.SetBoosts(f.Boosts)
+	UI.Pop("🚀 BOOST!", "boost")
+	Effects.Flash(Color3.fromRGB(255, 170, 60), 0.25)
+	Effects.Burst(f.Position, "boost", Color3.fromRGB(255, 150, 40), 20)
+	Effects.Play("Launch", 1.2)
+	Effects.Shake(0.9)
 end
 
 -- One fixed physics substep of length h.
@@ -579,8 +630,15 @@ local function flightStep(dt: number)
 		return
 	end
 	dt = math.min(dt, 0.1)
-	local steps = math.max(1, math.ceil(dt / SUBSTEP))
-	local h = dt / steps
+	-- TNT slow motion: the world slows down, the camera keeps real time.
+	local simDt = dt
+	if f.SlowMo > 0 then
+		f.SlowMo -= dt
+		simDt = dt * Config.SlowMo.TimeScale
+	end
+	f.BoostCooldown = math.max(0, f.BoostCooldown - dt)
+	local steps = math.max(1, math.ceil(simDt / SUBSTEP))
+	local h = simDt / steps
 	local steer = steerInput()
 	for _ = 1, steps do
 		simulate(f, h, steer)
@@ -656,6 +714,12 @@ startFlight = function(launchPower: number)
 		RunCoins = 0,
 		Smashes = 0,
 		Stars = 0,
+		Rings = 0,
+		Gold = 0,
+		TNT = 0,
+		Boosts = stats.BoostCharges,
+		BoostCooldown = 0,
+		SlowMo = 0,
 		Zone = 1,
 		FovKick = 8,
 		CameraPosition = camera().CFrame.Position,
@@ -676,6 +740,22 @@ startFlight = function(launchPower: number)
 	end)
 
 	UI.SetMode("Flying")
+	UI.SetBoosts(f.Boosts)
+	setPlayerListVisible(false)
+	ContextActionService:BindActionAtPriority(
+		BOOST_ACTION,
+		function(_actionName, inputState)
+			if inputState == Enum.UserInputState.Begin then
+				boost()
+			end
+			return Enum.ContextActionResult.Sink
+		end,
+		false,
+		Enum.ContextActionPriority.High.Value + 10,
+		Enum.KeyCode.Space,
+		Enum.KeyCode.ButtonA,
+		Enum.KeyCode.ButtonR2
+	)
 	UI.Pop(if launchPower >= 0.99 then "PERFECT!" else "LAUNCH!", "max")
 	Effects.Play("Launch", 0.9)
 	Effects.Shake(1)
@@ -689,6 +769,9 @@ finishFlight = function(reason: string)
 	end
 	flight = nil
 	unbindStep(FLIGHT_STEP)
+	ContextActionService:UnbindAction(BOOST_ACTION)
+	setPlayerListVisible(true)
+	setPromptsEnabled(true)
 	Effects.SetWind(0)
 	Effects.HideSpeedLines()
 	state = "Results"
@@ -719,6 +802,9 @@ finishFlight = function(reason: string)
 			Distance = distance,
 			Smashes = f.Smashes,
 			Stars = f.Stars,
+			Rings = f.Rings,
+			Gold = f.Gold,
+			TNT = f.TNT,
 			MaxCombo = f.MaxCombo,
 			RunCoins = f.RunCoins,
 		}
@@ -742,6 +828,10 @@ finishFlight = function(reason: string)
 			UI.Pop("NEW BEST!", "best")
 			Effects.Flash(Color3.fromRGB(255, 200, 255), 0.3)
 		end
+		local discoveries = result.Discoveries
+		if type(discoveries) == "table" and #discoveries > 0 then
+			UI.Banner("📖 NEW DISCOVERY: " .. discoveries[1].Icon .. " " .. string.upper(discoveries[1].Name))
+		end
 		Effects.Play("Coin", 1)
 		UI.ShowResults(result, comboMultiplier)
 	end)
@@ -752,6 +842,9 @@ returnToLobby = function()
 	flight = nil
 	unbindStep(FLIGHT_STEP)
 	unbindAiming()
+	ContextActionService:UnbindAction(BOOST_ACTION)
+	setPlayerListVisible(true)
+	setPromptsEnabled(true)
 	Effects.SetWind(0)
 	Effects.HideSpeedLines()
 	setFlyerMode(false)
@@ -771,6 +864,9 @@ local function resetToLobbyState()
 	flight = nil
 	unbindStep(FLIGHT_STEP)
 	unbindAiming()
+	ContextActionService:UnbindAction(BOOST_ACTION)
+	setPlayerListVisible(true)
+	setPromptsEnabled(true)
 	Effects.SetWind(0)
 	Effects.HideSpeedLines()
 	table.clear(savedGroups)
@@ -808,7 +904,7 @@ local function applyData(newData)
 	Effects.ApplySettings(newData.Settings)
 end
 
-local function invoke(remoteName: string, ...): (boolean, string?)
+local function invoke(remoteName: string, ...): (boolean, any)
 	local args = table.pack(...)
 	local remote = remotes:FindFirstChild(remoteName)
 	if not remote or not remote:IsA("RemoteFunction") then
@@ -889,6 +985,29 @@ UI.Init(playerGui, {
 			UI.Toast(message or "Couldn't equip that", Color3.fromRGB(255, 120, 120))
 		end
 	end,
+	Boost = function()
+		boost()
+	end,
+	ClaimDaily = function()
+		local ok, result = invoke("ClaimDaily")
+		if ok then
+			UI.Pop("🎁 DAILY REWARD!", "best")
+			UI.Toast("🎁 +" .. Format.Commas(tonumber(result) or 0) .. " coins!", Color3.fromRGB(140, 255, 100))
+			Effects.Play("Coin", 1.3)
+			Effects.Flash(Color3.fromRGB(255, 225, 90), 0.3)
+		else
+			UI.Toast(tostring(result or "Can't claim yet"), Color3.fromRGB(255, 120, 120))
+		end
+	end,
+	RedeemCode = function(text: string)
+		local ok, result = invoke("RedeemCode", text)
+		if ok then
+			UI.CodeResult(true, "✅ +" .. Format.Commas(tonumber(result) or 0) .. " coins!")
+			Effects.Play("Coin", 1.3)
+		else
+			UI.CodeResult(false, tostring(result or "Couldn't redeem that"))
+		end
+	end,
 	Setting = function(key: string, value: boolean)
 		if not data then
 			return
@@ -899,6 +1018,13 @@ UI.Init(playerGui, {
 		UpdateSettingRemote:FireServer(key, value)
 	end,
 })
+
+-- Walking up to the slingshot and pressing E also works.
+ProximityPromptService.PromptTriggered:Connect(function(prompt, who)
+	if who == player and prompt.Name == "SlingLaunchPrompt" then
+		enterAiming()
+	end
+end)
 
 -- Holding the power panel itself also charges (handy on phones).
 UI.PowerButton().InputBegan:Connect(function(input)
