@@ -391,13 +391,6 @@ end
 -- Rebirth, trails, settings, sounds
 --------------------------------------------------------------------------------
 
--- Redeemable codes: each player can use each code once.
-Config.Codes = {
-	LAUNCH = 500,
-	SMASH = 1500,
-	KABOOM = 3000,
-}
-
 -- Upper-cases a typed code and strips spaces; nil if it can't be a code.
 function Config.NormalizeCode(text: any): string?
 	if type(text) ~= "string" or #text > 40 then
@@ -965,6 +958,7 @@ local CourseLayout = require(Shared:WaitForChild("CourseLayout"))
 local Daily = require(Shared:WaitForChild("Daily"))
 local Index = require(Shared:WaitForChild("Index"))
 
+local Codes = require(script.Codes)
 local DataService = require(script.DataService)
 local Leaderboard = require(script.Leaderboard)
 local WorldBuilder = require(script.WorldBuilder)
@@ -1155,8 +1149,17 @@ Players.PlayerRemoving:Connect(function(player)
 end)
 
 game:BindToClose(function()
-	task.spawn(Leaderboard.Flush)
+	-- Write leaderboard bests and player data in parallel, and wait for both.
+	local flushed = false
+	task.spawn(function()
+		Leaderboard.Flush()
+		flushed = true
+	end)
 	DataService.SaveAll()
+	local deadline = os.clock() + 20
+	while not flushed and os.clock() < deadline do
+		task.wait(0.1)
+	end
 end)
 
 task.spawn(function()
@@ -1390,7 +1393,7 @@ RedeemCode.OnServerInvoke = function(player, text)
 	lastCodeAttempt[player] = now
 
 	local code = Config.NormalizeCode(text)
-	local reward = code and Config.Codes[code]
+	local reward = code and Codes[code]
 	if not code or not reward then
 		return false, "That code doesn't exist"
 	end
@@ -1418,6 +1421,23 @@ print("[SlingSmash] Server ready -", layout.TotalBlocks, "blocks,", #layout.Star
 ]]></string>
       </Properties>
       <Item class="ModuleScript" referent="11">
+        <Properties>
+          <string name="Name">Codes</string>
+          <string name="Source"><![CDATA[--[[
+	Redeemable codes and their coin rewards. Server-only, so players can't read
+	the list out of ReplicatedStorage. Each player can use each code once.
+	Keys must be upper case with no spaces (see Config.NormalizeCode).
+]]
+
+return {
+	LAUNCH = 500,
+	SMASH = 1500,
+	KABOOM = 3000,
+}
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="12">
         <Properties>
           <string name="Name">DataService</string>
           <string name="Source"><![CDATA[--[[
@@ -1642,7 +1662,7 @@ return DataService
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="12">
+      <Item class="ModuleScript" referent="13">
         <Properties>
           <string name="Name">Leaderboard</string>
           <string name="Source"><![CDATA[--[[
@@ -1651,6 +1671,8 @@ return DataService
 	Published games keep a global top 10 in an OrderedDataStore. Where
 	DataStores aren't available (an unpublished place, or Studio without API
 	access) the board shows the best distances of the players in this server.
+	Temporary DataStore errors (throttling, outages) only skip one refresh or
+	flush; queued bests are kept and retried.
 ]]
 
 local DataStoreService = game:GetService("DataStoreService")
@@ -1659,6 +1681,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Config = require(ReplicatedStorage.Shared.Config)
 local Format = require(ReplicatedStorage.Shared.Format)
+local WorldBuilder = require(script.Parent.WorldBuilder)
 
 local Leaderboard = {}
 
@@ -1669,8 +1692,9 @@ local FLUSH_INTERVAL = 30
 
 local store: OrderedDataStore? = nil
 local warned = false
+local flushing = false
 local pending = {} -- [userId] = best distance waiting to be written
-local nameCache = {} -- [userId] = display name
+local nameCache = {} -- [userId] = username (successful lookups only)
 local rows = {} -- { { Name: TextLabel, Value: TextLabel } }
 local statusLabel: TextLabel? = nil
 local getBest: (Player) -> number = function()
@@ -1686,87 +1710,32 @@ do
 	end
 end
 
-local function disableStore(err: any)
+-- Unpublished places and disabled API access never recover; everything else
+-- (throttling, outages) is treated as temporary.
+local function handleError(err: any)
+	local message = tostring(err)
+	local permanent = message:find("StudioAccessToApisNotAllowed") ~= nil
+		or message:find("publish") ~= nil
+		or message:find("403") ~= nil
+	if permanent then
+		store = nil
+	end
 	if not warned then
 		warned = true
-		warn("[SlingSmash] Global leaderboard unavailable, showing this server only:", err)
+		warn("[SlingSmash] Global leaderboard request failed:", message)
 	end
-	store = nil
-end
-
-local function label(props): TextLabel
-	local text = Instance.new("TextLabel")
-	text.BackgroundTransparency = 1
-	text.Font = Enum.Font.FredokaOne
-	text.TextScaled = true
-	text.TextColor3 = Color3.new(1, 1, 1)
-	for key, value in props do
-		(text :: any)[key] = value
-	end
-	local stroke = Instance.new("UIStroke")
-	stroke.Thickness = 2
-	stroke.Color = Color3.fromRGB(30, 18, 10)
-	stroke.Parent = text
-	return text
 end
 
 local function buildBoard(parent: Instance)
-	local position = Config.LeaderboardPosition
-	local spawn = Config.LobbySpawn
-	local height = 13
-	local center = position + Vector3.new(0, height, 0)
-	local lookTarget = Vector3.new(spawn.X, center.Y, spawn.Z)
+	local _, gui = WorldBuilder.Signboard(parent, "TopLaunchesBoard", Config.LeaderboardPosition, Vector2.new(20, 22), 6)
 
-	local model = Instance.new("Model")
-	model.Name = "TopLaunchesBoard"
-	model.Parent = parent
-
-	local board = Instance.new("Part")
-	board.Name = "Board"
-	board.Anchored = true
-	board.Size = Vector3.new(20, 22, 1)
-	board.CFrame = CFrame.lookAt(center, lookTarget)
-	board.Color = Color3.fromRGB(70, 46, 32)
-	board.Material = Enum.Material.SmoothPlastic
-	board.Parent = model
-
-	for _, side in { -1, 1 } do
-		local post = Instance.new("Part")
-		post.Name = "Post"
-		post.Anchored = true
-		post.Size = Vector3.new(1.4, height + 11, 1.4)
-		post.CFrame = board.CFrame * CFrame.new(side * 10.7, -(height + 11) / 2 + 11, 0)
-		post.Color = Color3.fromRGB(255, 196, 40)
-		post.Material = Enum.Material.SmoothPlastic
-		post.Parent = model
-	end
-
-	local gui = Instance.new("SurfaceGui")
-	gui.Face = Enum.NormalId.Front -- lookAt points the front face at the spawn
-	gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
-	gui.PixelsPerStud = 25
-	gui.LightInfluence = 0
-	gui.Parent = board
-
-	local padding = Instance.new("UIPadding")
-	padding.PaddingTop = UDim.new(0, 16)
-	padding.PaddingBottom = UDim.new(0, 16)
-	padding.PaddingLeft = UDim.new(0, 20)
-	padding.PaddingRight = UDim.new(0, 20)
-	padding.Parent = gui
-
-	local list = Instance.new("UIListLayout")
-	list.SortOrder = Enum.SortOrder.LayoutOrder
-	list.Padding = UDim.new(0, 6)
-	list.Parent = gui
-
-	local title = label({
+	WorldBuilder.SignLabel({
 		Text = "🏆 TOP LAUNCHES",
 		Size = UDim2.new(1, 0, 0, 64),
 		TextColor3 = Color3.fromRGB(255, 214, 60),
 		LayoutOrder = 0,
+		Parent = gui,
 	})
-	title.Parent = gui
 
 	for rank = 1, ROWS do
 		local row = Instance.new("Frame")
@@ -1780,21 +1749,20 @@ local function buildBoard(parent: Instance)
 		corner.CornerRadius = UDim.new(0, 8)
 		corner.Parent = row
 
-		local medal = if rank == 1 then "🥇" elseif rank == 2 then "🥈" elseif rank == 3 then "🥉" else "#" .. rank
-		label({
-			Text = medal,
+		WorldBuilder.SignLabel({
+			Text = if rank == 1 then "🥇" elseif rank == 2 then "🥈" elseif rank == 3 then "🥉" else "#" .. rank,
 			Position = UDim2.fromOffset(6, 3),
 			Size = UDim2.new(0, 50, 1, -6),
 			Parent = row,
 		})
-		local name = label({
+		local name = WorldBuilder.SignLabel({
 			Text = "---",
 			Position = UDim2.fromOffset(62, 3),
 			Size = UDim2.new(0.62, -62, 1, -6),
 			TextXAlignment = Enum.TextXAlignment.Left,
 			Parent = row,
 		})
-		local value = label({
+		local value = WorldBuilder.SignLabel({
 			Text = "",
 			AnchorPoint = Vector2.new(1, 0),
 			Position = UDim2.new(1, -10, 0, 3),
@@ -1806,20 +1774,20 @@ local function buildBoard(parent: Instance)
 		rows[rank] = { Name = name, Value = value }
 	end
 
-	local status = label({
+	statusLabel = WorldBuilder.SignLabel({
 		Text = "",
 		Size = UDim2.new(1, 0, 0, 26),
 		TextColor3 = Color3.fromRGB(255, 226, 190),
 		LayoutOrder = ROWS + 1,
+		Parent = gui,
 	})
-	status.Parent = gui
-	statusLabel = status
 end
 
+-- Usernames everywhere, so a player reads the same online and offline.
 local function nameFor(userId: number): string
 	local player = Players:GetPlayerByUserId(userId)
 	if player then
-		return player.DisplayName
+		return player.Name
 	end
 	local cached = nameCache[userId]
 	if cached then
@@ -1828,9 +1796,11 @@ local function nameFor(userId: number): string
 	local ok, name = pcall(function()
 		return Players:GetNameFromUserIdAsync(userId)
 	end)
-	local result = if ok and type(name) == "string" then name else "Player"
-	nameCache[userId] = result
-	return result
+	if ok and type(name) == "string" then
+		nameCache[userId] = name
+		return name
+	end
+	return "Player" -- not cached: try again on the next refresh
 end
 
 local function render(entries, isGlobal: boolean)
@@ -1842,8 +1812,9 @@ local function render(entries, isGlobal: boolean)
 			row.Value.Text = if entry then Format.Commas(entry.Value) else ""
 		end
 	end
-	if statusLabel then
-		statusLabel.Text = if isGlobal
+	local status = statusLabel
+	if status then
+		status.Text = if isGlobal
 			then "🌍 All servers • best distance in studs"
 			else "🏠 This server • publish the game for a global board"
 	end
@@ -1854,7 +1825,7 @@ local function localEntries()
 	for _, player in Players:GetPlayers() do
 		local best = getBest(player)
 		if best > 0 then
-			table.insert(entries, { Name = player.DisplayName, Value = best })
+			table.insert(entries, { Name = player.Name, Value = best })
 		end
 	end
 	table.sort(entries, function(a, b)
@@ -1872,7 +1843,7 @@ local function globalEntries()
 		return activeStore:GetSortedAsync(false, ROWS)
 	end)
 	if not ok then
-		disableStore(pages)
+		handleError(pages)
 		return nil
 	end
 	local entries = {}
@@ -1899,36 +1870,50 @@ function Leaderboard.Submit(player: Player, best: number)
 	if best <= 0 then
 		return
 	end
-	pending[player.UserId] = math.floor(best)
+	local userId = player.UserId
+	pending[userId] = math.max(pending[userId] or 0, math.floor(best))
 	if not store then
 		render(localEntries(), false)
 	end
 end
 
--- Writes queued bests. Only ever raises a stored value.
-function Leaderboard.Flush(onlyUserId: number?)
+-- Writes queued bests and yields until done. Only ever raises a stored value.
+function Leaderboard.Flush()
+	-- One flush at a time; a second caller waits for the running one.
+	while flushing do
+		task.wait(0.1)
+	end
 	local activeStore = store
 	if not activeStore then
 		return
 	end
+	flushing = true
+
+	-- Work from a snapshot: Submit can run while UpdateAsync yields.
+	local batch = {}
 	for userId, best in pending do
-		if onlyUserId == nil or onlyUserId == userId then
-			local ok, err = pcall(function()
-				activeStore:UpdateAsync(tostring(userId), function(old)
-					if type(old) == "number" and old >= best then
-						return nil
-					end
-					return best
-				end)
+		table.insert(batch, { UserId = userId, Best = best })
+	end
+	for _, item in batch do
+		local ok, err = pcall(function()
+			activeStore:UpdateAsync(tostring(item.UserId), function(old)
+				if type(old) == "number" and old >= item.Best then
+					return nil
+				end
+				return item.Best
 			end)
-			if ok then
-				pending[userId] = nil
-			else
-				disableStore(err)
-				return
+		end)
+		if ok then
+			-- Keep anything newer that arrived during the write.
+			if pending[item.UserId] == item.Best then
+				pending[item.UserId] = nil
 			end
+		else
+			handleError(err)
+			break -- try the rest on the next flush
 		end
 	end
+	flushing = false
 end
 
 function Leaderboard.Init(parent: Instance, bestForPlayer: (Player) -> number)
@@ -1936,8 +1921,8 @@ function Leaderboard.Init(parent: Instance, bestForPlayer: (Player) -> number)
 	buildBoard(parent)
 	render({}, store ~= nil)
 
-	Players.PlayerRemoving:Connect(function(player)
-		task.spawn(Leaderboard.Flush, player.UserId)
+	Players.PlayerRemoving:Connect(function()
+		task.spawn(Leaderboard.Flush)
 	end)
 
 	task.spawn(function()
@@ -1958,7 +1943,7 @@ return Leaderboard
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="13">
+      <Item class="ModuleScript" referent="14">
         <Properties>
           <string name="Name">WorldBuilder</string>
           <string name="Source"><![CDATA[--[[
@@ -2343,34 +2328,37 @@ local HOW_TO_PLAY = {
 	"6. Buy ⬆️ UPGRADES and fly further!",
 }
 
-local function buildHowToPlay(map: Folder)
-	local position = Config.HowToPlayPosition
+-- A signboard on two golden posts, turned to face the lobby spawn. Returns the
+-- board part and a SurfaceGui with padding and a vertical list layout.
+function WorldBuilder.Signboard(parent: Instance, name: string, position: Vector3, size: Vector2, spacing: number?)
 	local spawn = Config.LobbySpawn
-	local center = position + Vector3.new(0, 11, 0)
+	local lift = 3 -- gap between the ground and the bottom of the board
+	local center = position + Vector3.new(0, lift + size.Y / 2, 0)
 
 	local model = Instance.new("Model")
-	model.Name = "HowToPlay"
-	model.Parent = map
+	model.Name = name
+	model.Parent = parent
 
 	local board = part({
 		Name = "Board",
-		Size = Vector3.new(20, 16, 1),
+		Size = Vector3.new(size.X, size.Y, 1),
 		CFrame = CFrame.lookAt(center, Vector3.new(spawn.X, center.Y, spawn.Z)),
 		Color = Color3.fromRGB(70, 46, 32),
 		Parent = model,
 	})
+	local postHeight = lift + size.Y
 	for _, side in { -1, 1 } do
 		part({
 			Name = "Post",
-			Size = Vector3.new(1.4, 19, 1.4),
-			CFrame = board.CFrame * CFrame.new(side * 10.7, -1.5, 0),
+			Size = Vector3.new(1.4, postHeight, 1.4),
+			CFrame = board.CFrame * CFrame.new(side * (size.X / 2 + 0.7), postHeight / 2 - (lift + size.Y / 2), 0),
 			Color = Color3.fromRGB(255, 196, 40),
 			Parent = model,
 		})
 	end
 
 	local gui = Instance.new("SurfaceGui")
-	gui.Face = Enum.NormalId.Front
+	gui.Face = Enum.NormalId.Front -- lookAt points the front face at the spawn
 	gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
 	gui.PixelsPerStud = 25
 	gui.LightInfluence = 0
@@ -2385,29 +2373,49 @@ local function buildHowToPlay(map: Folder)
 
 	local list = Instance.new("UIListLayout")
 	list.SortOrder = Enum.SortOrder.LayoutOrder
-	list.Padding = UDim.new(0, 8)
+	list.Padding = UDim.new(0, spacing or 8)
 	list.Parent = gui
 
-	local function line(text: string, order: number, height: number, color: Color3, align: Enum.TextXAlignment)
-		local label = Instance.new("TextLabel")
-		label.BackgroundTransparency = 1
-		label.Size = UDim2.new(1, 0, 0, height)
-		label.Font = Enum.Font.FredokaOne
-		label.Text = text
-		label.TextScaled = true
-		label.TextColor3 = color
-		label.TextXAlignment = align
-		label.LayoutOrder = order
-		label.Parent = gui
-		local stroke = Instance.new("UIStroke")
-		stroke.Thickness = 2
-		stroke.Color = Color3.fromRGB(30, 18, 10)
-		stroke.Parent = label
-	end
+	return board, gui
+end
 
-	line("HOW TO PLAY", 0, 62, Color3.fromRGB(255, 214, 60), Enum.TextXAlignment.Center)
+-- Outlined cartoon text for signboards.
+function WorldBuilder.SignLabel(props: { [string]: any }): TextLabel
+	local label = Instance.new("TextLabel")
+	label.BackgroundTransparency = 1
+	label.Font = Enum.Font.FredokaOne
+	label.TextScaled = true
+	label.TextColor3 = Color3.new(1, 1, 1)
+	for key, value in props do
+		if key ~= "Parent" then
+			(label :: any)[key] = value
+		end
+	end
+	local stroke = Instance.new("UIStroke")
+	stroke.Thickness = 2
+	stroke.Color = Color3.fromRGB(30, 18, 10)
+	stroke.Parent = label
+	label.Parent = props.Parent
+	return label
+end
+
+local function buildHowToPlay(map: Folder)
+	local _, gui = WorldBuilder.Signboard(map, "HowToPlay", Config.HowToPlayPosition, Vector2.new(20, 16))
+	WorldBuilder.SignLabel({
+		Text = "HOW TO PLAY",
+		Size = UDim2.new(1, 0, 0, 62),
+		TextColor3 = Color3.fromRGB(255, 214, 60),
+		LayoutOrder = 0,
+		Parent = gui,
+	})
 	for i, text in HOW_TO_PLAY do
-		line(text, i, 40, Color3.new(1, 1, 1), Enum.TextXAlignment.Left)
+		WorldBuilder.SignLabel({
+			Text = text,
+			Size = UDim2.new(1, 0, 0, 40),
+			TextXAlignment = Enum.TextXAlignment.Left,
+			LayoutOrder = i,
+			Parent = gui,
+		})
 	end
 end
 
@@ -2637,15 +2645,15 @@ return WorldBuilder
       </Item>
     </Item>
   </Item>
-  <Item class="StarterPlayer" referent="14">
+  <Item class="StarterPlayer" referent="15">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="15">
+    <Item class="StarterPlayerScripts" referent="16">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="LocalScript" referent="16">
+      <Item class="LocalScript" referent="17">
         <Properties>
           <string name="Name">Client</string>
           <string name="Source"><![CDATA[--[[
@@ -3027,7 +3035,8 @@ UserInputService.InputBegan:Connect(function(input, processed)
 	end
 	if state == "Aiming" then
 		startCharging(input)
-	elseif state == "Flying" then
+	elseif state == "Flying" and input.UserInputType == Enum.UserInputType.MouseButton1 then
+		-- Mouse clicks boost; phones use the BOOST button so stray taps don't waste charges.
 		boost()
 	end
 end)
@@ -3079,7 +3088,10 @@ local function registerSmash(f, entry)
 		f.TNT += 1
 	end
 
-	local sparkKey = entry.Data.Kind .. ":" .. entry.Data.Zone .. ":" .. entry.Data.ColorIndex
+	-- Gold and TNT always look the same; normal blocks vary by zone and colour.
+	local sparkKey = if entry.Data.Kind == "Block"
+		then "Block:" .. entry.Data.Zone .. ":" .. entry.Data.ColorIndex
+		else entry.Data.Kind
 	Effects.Burst(entry.Position, sparkKey, entry.Part.Color, if crit then 14 else 6)
 	Effects.Play("Smash", rng:NextNumber(0.85, 1.35), 0.05)
 	if crit then
@@ -3706,7 +3718,7 @@ if player.Character then
 end
 ]]></string>
         </Properties>
-        <Item class="ModuleScript" referent="17">
+        <Item class="ModuleScript" referent="18">
           <Properties>
             <string name="Name">Course</string>
             <string name="Source"><![CDATA[--[[
@@ -4048,7 +4060,7 @@ return Course
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="18">
+        <Item class="ModuleScript" referent="19">
           <Properties>
             <string name="Name">Effects</string>
             <string name="Source"><![CDATA[--[[
@@ -4334,7 +4346,7 @@ end
 -- Sparkle bursts. One emitter per colour key so recolouring never repaints
 -- sparks that are already flying.
 local burstEmitters = {} -- [key] = { Part, Emitter }
-local MAX_EMITTERS = 24
+local MAX_EMITTERS = 32
 
 local function burstEmitter(key: string, color: Color3)
 	local existing = burstEmitters[key]
@@ -4404,7 +4416,7 @@ return Effects
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="19">
+        <Item class="ModuleScript" referent="20">
           <Properties>
             <string name="Name">UI</string>
             <string name="Source"><![CDATA[--[[
@@ -4416,6 +4428,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
 
 local Config = require(ReplicatedStorage.Shared.Config)
 local Daily = require(ReplicatedStorage.Shared.Daily)
@@ -5600,7 +5613,8 @@ local function refreshDaily()
 	if not data then
 		return
 	end
-	local canClaim, streak, wait = Daily.Status(data.Daily, os.time())
+	-- Use the server's clock: the server decides whether a claim is allowed.
+	local canClaim, streak, wait = Daily.Status(data.Daily, Workspace:GetServerTimeNow())
 	local highlight = math.clamp(streak, 1, #Daily.Rewards)
 	for day, card in dailyCards do
 		card.Label.Text = Format.Short(Daily.Reward(day, data.Rebirths))
@@ -5797,7 +5811,7 @@ function UI.SetData(newData)
 	UI.RefreshPointers()
 
 	-- Greet returning players with their daily reward, once per session.
-	if not dailyPrompted and Daily.Status(data.Daily, os.time()) then
+	if not dailyPrompted and Daily.Status(data.Daily, Workspace:GetServerTimeNow()) then
 		dailyPrompted = true
 		task.delay(1.5, function()
 			if mode == "Lobby" and not UpgradeTree.IsOpen() then
@@ -6094,7 +6108,7 @@ return UI
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="20">
+        <Item class="ModuleScript" referent="21">
           <Properties>
             <string name="Name">UpgradeTree</string>
             <string name="Source"><![CDATA[--[[
@@ -6654,7 +6668,7 @@ return UpgradeTree
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="21">
+        <Item class="ModuleScript" referent="22">
           <Properties>
             <string name="Name">Widgets</string>
             <string name="Source"><![CDATA[--[[
@@ -6968,7 +6982,7 @@ return Widgets
       </Item>
     </Item>
   </Item>
-  <Item class="Workspace" referent="22">
+  <Item class="Workspace" referent="23">
     <Properties>
       <string name="Name">Workspace</string>
       <bool name="NeedsPivotMigration">false</bool>

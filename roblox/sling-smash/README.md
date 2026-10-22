@@ -17,10 +17,11 @@ the edit view looks empty until you press Play. That's expected.
 
 | Action | Keyboard / mouse | Phone / tablet | Gamepad |
 | --- | --- | --- | --- |
-| Get in the slingshot | **Launch** button | **Launch** button | **Launch** button |
+| Get in the slingshot | **Launch** button, or **E** at the slingshot | **Launch** button | **Launch** button |
 | Charge | Hold left click or Space | Press and hold the power bar | Hold A or R2 |
 | Launch | Release | Release | Release |
 | Steer in the air | A / D or ← / → | Thumbstick | Left stick |
+| Rocket boost in the air | Left click or Space | 🚀 **BOOST** button | A or R2 |
 | Cancel | Red **X** next to the power bar | Same | Same |
 
 ## What's in the game
@@ -33,13 +34,20 @@ the edit view looks empty until you press Play. That's expected.
   - **TNT** blocks explode, chain-react and boost you forward.
 - **Combos and crits:** keep smashing to build the combo multiplier (x2, x3 …). 8% of smashes are **CRITICAL!** and pay triple.
 - **Stars and boost rings:** floating stars give bonus coins, and cyan rings fire you forward.
+- **Rocket boost:** a mid-air boost (one per launch to start; the Rocket Fuel upgrades add up to three more).
+- **Juice:** slow motion when TNT goes off, coloured sparkles on every smash, screen shake and speed lines.
 - **Four zones** (Green Meadows → Sky City → Neon Grid → Candy Peaks). Each zone multiplies coin values.
-- **Results screen:** coins earned, distance, smashes and best combo, with Retry / Return buttons.
-- **Upgrade tree:** 33 hex nodes in 8 branches: Launch Power, Hang Time, Air Control, Combo Time, Combo King, Smash Power, Coin Bonus and Wrecking Ball. Drag to pan, 🔍 to zoom.
+- **Results screen:** coins count up, plus distance, smashes, best combo and any new discoveries. A new best throws confetti.
+- **Upgrade tree:** 36 hex nodes in 9 branches: Launch Power, Hang Time, Air Control, Combo Time, Combo King, Smash Power, Coin Bonus, Wrecking Ball and Rocket Fuel. Drag to pan, 🔍 to zoom.
 - **Rebirth:** reset coins and upgrades for a permanent coin multiplier.
 - **Trail shop:** six trails, including Ocean, Fire, Toxic, Galaxy and Rainbow.
+- **Index:** 12 things to discover (each zone, the finish line, gold, TNT, stars, rings, big combos). Each pays a one-time reward.
+- **Daily reward:** a 7-day streak with bigger rewards each day, based on the server's clock.
+- **Codes:** type a code for free coins (try `LAUNCH`).
+- **Top Launches board** in the lobby. It's global across servers once published, and shows this server's players otherwise.
+- **How to Play sign** in the lobby, and pointers that guide brand-new players to Launch and then to Upgrades.
 - **Stats** panel and **Settings** panel (music, SFX, camera shake, speed lines, hints).
-- **Leaderboard** showing coins and best distance.
+- **Player list** showing coins and best distance (hidden while you fly so it doesn't cover the distance counter).
 - **Saving:** progress saves with DataStores once the game is published (see below).
 
 ## Publishing and saving progress
@@ -63,6 +71,9 @@ Every balance number lives in [`src/shared/Config.luau`](src/shared/Config.luau)
 
 In Studio it's `ReplicatedStorage → Shared → Config`.
 
+Redeem codes live in [`src/server/Codes.luau`](src/server/Codes.luau) (server-only,
+so players can't read them). Keys must be UPPER CASE with no spaces.
+
 To add **background music**, upload or pick an audio asset and paste its id into
 `Config.Sounds.Music`, for example `"rbxassetid://1234567890"`. The other sound
 effects use sounds built into Roblox, so they work without uploading anything.
@@ -76,18 +87,23 @@ default.project.json        Rojo project → builds SlingSmash.rbxlx
 src/shared/                 ReplicatedStorage.Shared (used by server + client)
   Config.luau               all tunables + upgrade tree definition
   CourseLayout.luau         deterministic obstacle layout
+  Daily.luau                daily reward streak rules
   Format.luau               number formatting (7,880 / 1.4K)
+  Index.luau                Index entries and how they unlock
 src/server/                 ServerScriptService.Server
-  init.server.luau          remotes, characters, trails, launch validation
+  init.server.luau          remotes, characters, trails, launch validation, rewards
+  Codes.luau                redeemable codes (server-only)
   DataService.luau          DataStore load/save + leaderstats
-  WorldBuilder.luau         lobby, slingshot, lane, zones, decorations, lighting
+  Leaderboard.luau          "Top Launches" board (OrderedDataStore)
+  WorldBuilder.luau         lobby, slingshot, signs, lane, zones, decorations, lighting
 src/client/                 StarterPlayerScripts.Client
   init.client.luau          state machine, charging, flight physics, camera
   Course.luau               local smashable course + hit detection
   Effects.luau              sounds, shake, speed lines, floating numbers
-  UI.luau                   HUD, results, shop, rebirth, stats, settings
+  UI.luau                   HUD, results, shop, rebirth, index, daily, codes, stats, settings
   UpgradeTree.luau          hex upgrade tree screen
   Widgets.luau              tiny UI kit (panels, buttons, labels)
+tests/                      logic tests for the shared modules (not part of the place)
 ```
 
 Rebuild the place file after editing the source:
@@ -97,6 +113,21 @@ rojo build default.project.json -o SlingSmash.rbxlx
 ```
 
 Or run `rojo serve` and connect from the Rojo Studio plugin to sync live.
+
+### Running the tests
+
+The tests run the real `Config`, `CourseLayout`, `Format`, `Index`, `Daily` and
+server `Codes` modules outside Roblox, using small stand-ins for `Vector3`,
+`Color3` and `Random`. They also run a copy of the flight physics to check that
+distances and coin rewards stay balanced. You need the standalone
+[`luau`](https://github.com/luau-lang/luau) command-line tool:
+
+```bash
+python3 tests/run.py            # uses `luau` on PATH, or $LUAU
+python3 tests/run.py /path/to/luau
+```
+
+It prints `ALL CHECKS PASSED` and exits with 0, or lists each failed check and exits with 1.
 
 ### How it works
 
@@ -113,6 +144,8 @@ Or run `rojo serve` and connect from the Rojo Studio plugin to sync live.
 ## Known limitations
 
 - The server only sanity-checks launch reports (time, distance, block and coin
-  caps). A determined exploiter could still inflate coins within those caps.
+  caps). A determined exploiter could still inflate coins within those caps,
+  including unlocking Index rewards with a forged launch. Closing that fully
+  needs the server to simulate each flight itself.
 - There is no background music until you add an audio id (see above).
-- The **Index** menu button is a "coming soon" placeholder.
+- The global Top Launches board only works in a published game with DataStores.
