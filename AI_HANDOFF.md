@@ -54,4 +54,6 @@ Develop a premium, cinematic, responsive product website for the fictional VOLT 
 - **Remaining issues / unverified behavior:**
   - Not playtested in Roblox Studio from this environment, so physics feel, UI layout on real screens, particles, the ProximityPrompt and DataStore/OrderedDataStore behaviour in a published game are unverified.
   - The server still trusts client launch reports within caps, so a forged report can inflate coins and unlock Index rewards. A full fix means simulating flights on the server.
+  - Saves aren't session-locked, so a very fast server hop can roll back a few seconds of progress.
+  - Redeem codes in `roblox/sling-smash/src/server/Codes.luau` are visible to anyone who can read this repository.
 - **Next highest-priority action:** playtest `roblox/sling-smash/SlingSmash.rbxlx` in Roblox Studio, including Test → Clients and Servers with 2 players, and note any bugs here.

@@ -71,8 +71,9 @@ Every balance number lives in [`src/shared/Config.luau`](src/shared/Config.luau)
 
 In Studio it's `ReplicatedStorage → Shared → Config`.
 
-Redeem codes live in [`src/server/Codes.luau`](src/server/Codes.luau) (server-only,
-so players can't read them). Keys must be UPPER CASE with no spaces.
+Redeem codes live in [`src/server/Codes.luau`](src/server/Codes.luau). Players can't
+read them from inside the game, but anyone who can see this repository can, so treat
+them as public promo codes. Keys must be UPPER CASE with no spaces.
 
 To add **background music**, upload or pick an audio asset and paste its id into
 `Config.Sounds.Music`, for example `"rbxassetid://1234567890"`. The other sound
@@ -149,3 +150,5 @@ It prints `ALL CHECKS PASSED` and exits with 0, or lists each failed check and e
   needs the server to simulate each flight itself.
 - There is no background music until you add an audio id (see above).
 - The global Top Launches board only works in a published game with DataStores.
+- Saves aren't session-locked. If a player hops servers within a few seconds, the
+  newer server can load data from before the last save and roll that progress back.

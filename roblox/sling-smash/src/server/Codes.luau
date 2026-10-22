@@ -1,7 +1,10 @@
 --[[
-	Redeemable codes and their coin rewards. Server-only, so players can't read
-	the list out of ReplicatedStorage. Each player can use each code once.
+	Redeemable codes and their coin rewards. Each player can use each code once.
 	Keys must be upper case with no spaces (see Config.NormalizeCode).
+
+	This lives on the server, so players can't read it from inside the game.
+	Anyone who can read this source code can, though, so treat these as public
+	promo codes, not secrets.
 ]]
 
 return {
