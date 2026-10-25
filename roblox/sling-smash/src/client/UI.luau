@@ -366,11 +366,11 @@ local function buildRunHud()
 		Parent = gui,
 	})
 	Widgets.Round(boost)
-	refs.BoostStroke = Widgets.Stroke(boost, Color3.fromRGB(110, 40, 0), 4)
-	refs.BoostGradient = Widgets.Gradient(boost, Color3.fromRGB(255, 190, 60), Color3.fromRGB(240, 90, 30))
+	refs.BoostStroke = Widgets.Stroke(boost, Color3.fromRGB(0, 60, 110), 4)
+	refs.BoostGradient = Widgets.Gradient(boost, Color3.fromRGB(120, 240, 255), Color3.fromRGB(30, 120, 255))
 	Widgets.AutoScale(boost)
 	Widgets.Label({
-		Text = "🚀",
+		Text = "⚡",
 		AnchorPoint = Vector2.new(0.5, 0),
 		Position = UDim2.new(0.5, 0, 0, 14),
 		Size = UDim2.fromOffset(56, 56),
@@ -379,7 +379,7 @@ local function buildRunHud()
 		Parent = boost,
 	})
 	Widgets.Label({
-		Text = "BOOST",
+		Text = "NITRO",
 		AnchorPoint = Vector2.new(0.5, 1),
 		Position = UDim2.new(0.5, 0, 1, -16),
 		Size = UDim2.fromOffset(90, 26),
@@ -408,6 +408,47 @@ local function buildRunHud()
 		actions.Boost()
 	end)
 	refs.Boost = boost
+
+	-- Active power-up: icon, name and a draining bar (left side, clear of the action).
+	local ability = pill({
+		Name = "Ability",
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(0, 14, 0.42, 0),
+		Size = UDim2.fromOffset(270, 70),
+		Visible = false,
+		Parent = gui,
+	})
+	Widgets.AutoScale(ability)
+	refs.AbilityStroke = ability:FindFirstChildOfClass("UIStroke")
+	refs.AbilityIcon = Widgets.Label({
+		Text = "",
+		Position = UDim2.fromOffset(8, 8),
+		Size = UDim2.fromOffset(54, 54),
+		StrokeThickness = 0,
+		Parent = ability,
+	})
+	refs.AbilityName = Widgets.Label({
+		Text = "",
+		Position = UDim2.fromOffset(68, 8),
+		Size = UDim2.new(1, -78, 0, 30),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		StrokeThickness = 3,
+		Parent = ability,
+	})
+	local abilityBack = Widgets.new("Frame", {
+		Position = UDim2.new(0, 68, 1, -24),
+		Size = UDim2.new(1, -82, 0, 12),
+		BackgroundColor3 = Color3.fromRGB(20, 20, 30),
+		Parent = ability,
+	})
+	Widgets.Round(abilityBack)
+	refs.AbilityBar = Widgets.new("Frame", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		Parent = abilityBack,
+	})
+	Widgets.Round(refs.AbilityBar)
+	refs.Ability = ability
 
 	-- Power bar. The whole panel is a button so phones can press and hold it.
 	local power = Widgets.new("TextButton", {
@@ -442,7 +483,7 @@ local function buildRunHud()
 		Text = "0%",
 		AnchorPoint = Vector2.new(1, 0),
 		Position = UDim2.new(1, -18, 0, 10),
-		Size = UDim2.fromOffset(120, 34),
+		Size = UDim2.fromOffset(280, 34),
 		TextXAlignment = Enum.TextXAlignment.Right,
 		StrokeThickness = 3,
 		Parent = power,
@@ -942,7 +983,7 @@ local function refreshStats()
 end
 
 local function buildSettings()
-	local panel, content, close = Widgets.Panel(gui, "⚙️ Settings", Vector2.new(440, 420))
+	local panel, content, close = Widgets.Panel(gui, "⚙️ Settings", Vector2.new(440, 470))
 	panels.Settings = panel
 	close.Activated:Connect(UI.ClosePanels)
 	Widgets.new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = content })
@@ -1460,6 +1501,9 @@ function UI.SetMode(newMode: string)
 	refs.Power.Visible = aiming
 	refs.Combo.Visible = false
 	refs.Boost.Visible = flying
+	if not flying then
+		refs.Ability.Visible = false
+	end
 	panels.Results.Visible = false
 	if not lobby then
 		UI.ClosePanels()
@@ -1472,28 +1516,60 @@ function UI.RefreshHint()
 	local showHints = data == nil or data.Settings.Hints ~= false
 	refs.Hint.Visible = mode == "Flying" and showHints
 	refs.HintLabel.Text = if isTouchOnly()
-		then "STICK TO STEER • TAP 🚀 TO BOOST"
-		else "A / D TO STEER • CLICK TO BOOST"
+		then "STICK TO STEER • TAP ⚡ FOR NITRO"
+		else "A / D TO STEER • CLICK OR SPACE FOR NITRO"
 end
 
 -- Shows how many mid-air boosts are left.
 function UI.SetBoosts(left: number)
 	refs.BoostCount.Text = tostring(left)
-	local color = if left > 0 then Color3.fromRGB(255, 190, 60) else Color3.fromRGB(130, 130, 140)
-	local dark = if left > 0 then Color3.fromRGB(240, 90, 30) else Color3.fromRGB(80, 80, 90)
+	local color = if left > 0 then Color3.fromRGB(120, 240, 255) else Color3.fromRGB(130, 130, 140)
+	local dark = if left > 0 then Color3.fromRGB(30, 120, 255) else Color3.fromRGB(80, 80, 90)
 	refs.BoostGradient.Color = ColorSequence.new(color, dark)
 end
 
--- stateName: "aim" | "charging"
-function UI.SetPower(power: number, stateName: string)
+-- Shows the active power-up and how much of it is left (kind = nil hides it).
+local shownAbility = nil
+function UI.SetAbility(kind: string?, fraction: number?)
+	local ability = refs.Ability
+	if not kind then
+		ability.Visible = false
+		shownAbility = nil
+		return
+	end
+	local info = Config.Abilities[kind]
+	if shownAbility ~= kind then
+		shownAbility = kind
+		refs.AbilityIcon.Text = info.Icon
+		refs.AbilityName.Text = info.Name
+		refs.AbilityName.TextColor3 = info.Color:Lerp(Color3.new(1, 1, 1), 0.35)
+		refs.AbilityBar.BackgroundColor3 = info.Color
+		if refs.AbilityStroke then
+			refs.AbilityStroke.Color = info.Color
+		end
+		ability.Visible = true
+		Widgets.PopIn(ability)
+	end
+	refs.AbilityBar.Size = UDim2.fromScale(math.clamp(fraction or 1, 0, 1), 1)
+end
+
+-- stateName: "aim" | "charging". angle/yaw are the current aim in degrees.
+function UI.SetPower(power: number, stateName: string, angle: number?, yaw: number?)
 	refs.PowerFill.Size = UDim2.fromScale(power, 1)
-	refs.PowerPercent.Text = math.floor(power * 100 + 0.5) .. "%"
+	local aimText = ""
+	if angle then
+		aimText = string.format("  ∠%d°", math.floor(angle + 0.5))
+		if yaw and math.abs(yaw) >= 1 then
+			aimText ..= string.format(" %s%d°", if yaw > 0 then "→" else "←", math.floor(math.abs(yaw) + 0.5))
+		end
+	end
+	refs.PowerPercent.Text = math.floor(power * 100 + 0.5) .. "%" .. aimText
 	if stateName == "charging" then
-		refs.PowerStatus.Text = "RELEASE TO LAUNCH!"
+		refs.PowerStatus.Text = if isTouchOnly() then "DRAG TO AIM • RELEASE TO LAUNCH!" else "RELEASE TO LAUNCH!"
 	elseif isTouchOnly() then
-		refs.PowerStatus.Text = "PRESS & HOLD HERE TO CHARGE"
+		refs.PowerStatus.Text = "STICK AIMS • PRESS & HOLD HERE TO CHARGE"
 	else
-		refs.PowerStatus.Text = "HOLD CLICK OR SPACE TO CHARGE"
+		refs.PowerStatus.Text = "W/S A/D AIM • HOLD CLICK OR SPACE TO CHARGE"
 	end
 end
 
@@ -1531,6 +1607,12 @@ local POP_STYLES = {
 	boost = { Color3.fromRGB(140, 255, 255), Color3.fromRGB(0, 160, 255) },
 	best = { Color3.fromRGB(255, 120, 220), Color3.fromRGB(150, 90, 255) },
 	combo = { Color3.fromRGB(255, 160, 220), Color3.fromRGB(255, 60, 150) },
+	zap = { Color3.fromRGB(255, 140, 150), Color3.fromRGB(220, 30, 60) },
+	phase = { Color3.fromRGB(230, 255, 255), Color3.fromRGB(80, 220, 255) },
+	meteor = { Color3.fromRGB(255, 230, 120), Color3.fromRGB(255, 80, 20) },
+	rift = { Color3.fromRGB(230, 200, 255), Color3.fromRGB(140, 70, 255) },
+	shock = { Color3.fromRGB(255, 200, 200), Color3.fromRGB(255, 40, 60) },
+	nitro = { Color3.fromRGB(220, 255, 255), Color3.fromRGB(40, 150, 255) },
 }
 
 function UI.Pop(text: string, style: string?)
@@ -1555,11 +1637,12 @@ function UI.Pop(text: string, style: string?)
 end
 
 local bannerToken = 0
-function UI.Banner(text: string)
+function UI.Banner(text: string, color: Color3?)
 	bannerToken += 1
 	local token = bannerToken
 	local banner = refs.Banner
 	banner.Text = text
+	banner.TextColor3 = color or C.Header
 	banner.Visible = true
 	Widgets.PopIn(banner)
 	task.delay(2, function()

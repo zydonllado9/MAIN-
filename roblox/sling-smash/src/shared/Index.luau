@@ -11,12 +11,12 @@ local Config = require(script.Parent.Config)
 local Index = {}
 
 -- Goal types match the fields of a launch summary:
---   Distance, Smashes, Stars, Rings, Gold, TNT, MaxCombo
+--   Distance, Smashes, Stars, Rings, Gold, TNT, Armor, Powerups, MaxCombo
 Index.Entries = {
 	{
 		Id = "Zone1",
-		Name = "Green Meadows",
-		Icon = "🌳",
+		Name = Config.Zones[1].Name,
+		Icon = Config.Zones[1].Icon,
 		Hint = "Launch for the first time",
 		Goal = "Distance",
 		Value = 1,
@@ -24,8 +24,8 @@ Index.Entries = {
 	},
 	{
 		Id = "Zone2",
-		Name = "Sky City",
-		Icon = "🏙️",
+		Name = Config.Zones[2].Name,
+		Icon = Config.Zones[2].Icon,
 		Hint = "Fly " .. Config.Zones[1].EndsAt .. " studs",
 		Goal = "Distance",
 		Value = Config.Zones[1].EndsAt,
@@ -33,8 +33,8 @@ Index.Entries = {
 	},
 	{
 		Id = "Zone3",
-		Name = "Neon Grid",
-		Icon = "💠",
+		Name = Config.Zones[3].Name,
+		Icon = Config.Zones[3].Icon,
 		Hint = "Fly " .. Config.Zones[2].EndsAt .. " studs",
 		Goal = "Distance",
 		Value = Config.Zones[2].EndsAt,
@@ -42,12 +42,21 @@ Index.Entries = {
 	},
 	{
 		Id = "Zone4",
-		Name = "Candy Peaks",
-		Icon = "🍭",
+		Name = Config.Zones[4].Name,
+		Icon = Config.Zones[4].Icon,
 		Hint = "Fly " .. Config.Zones[3].EndsAt .. " studs",
 		Goal = "Distance",
 		Value = Config.Zones[3].EndsAt,
 		Reward = 25000,
+	},
+	{
+		Id = "Zone5",
+		Name = Config.Zones[5].Name,
+		Icon = Config.Zones[5].Icon,
+		Hint = "Fly " .. Config.Zones[4].EndsAt .. " studs",
+		Goal = "Distance",
+		Value = Config.Zones[4].EndsAt,
+		Reward = 60000,
 	},
 	{
 		Id = "Finish",
@@ -113,6 +122,33 @@ Index.Entries = {
 		Reward = 2500,
 	},
 	{
+		Id = "Armor",
+		Name = "Iron Breaker",
+		Icon = "🛡️",
+		Hint = "Break an armored block",
+		Goal = "Armor",
+		Value = 1,
+		Reward = 2000,
+	},
+	{
+		Id = "Powerup",
+		Name = "Power Surge",
+		Icon = "🔮",
+		Hint = "Grab a power-up orb",
+		Goal = "Powerups",
+		Value = 1,
+		Reward = 500,
+	},
+	{
+		Id = "Powerups3",
+		Name = "Overcharged",
+		Icon = "⚡",
+		Hint = "Grab 3 power-ups in one launch",
+		Goal = "Powerups",
+		Value = 3,
+		Reward = 8000,
+	},
+	{
 		Id = "Smash100",
 		Name = "Wrecking Crew",
 		Icon = "🔨",
@@ -120,6 +156,15 @@ Index.Entries = {
 		Goal = "Smashes",
 		Value = 100,
 		Reward = 5000,
+	},
+	{
+		Id = "Smash250",
+		Name = "Demolition",
+		Icon = "🏗️",
+		Hint = "Smash 250 blocks in one launch",
+		Goal = "Smashes",
+		Value = 250,
+		Reward = 20000,
 	},
 }
 

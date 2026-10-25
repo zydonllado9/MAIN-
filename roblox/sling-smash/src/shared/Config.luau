@@ -38,78 +38,225 @@ Config.BlockSize = 4
 Config.CourseSeed = 1337
 Config.CourseStart = 50
 
+-- Five biomes along the lane. Each one has its own look, lighting, weather,
+-- ground rule and obstacle mix (see CourseLayout). Index ids "ZoneN" follow
+-- the order here.
 Config.Zones = {
 	{
-		Name = "Green Meadows",
+		Name = "Sky Kingdom",
+		Key = "Sky",
+		Icon = "🏰",
 		EndsAt = 550,
 		ValueMult = 1,
-		GroundA = Color3.fromRGB(112, 208, 72),
-		GroundB = Color3.fromRGB(90, 184, 58),
-		Outer = Color3.fromRGB(78, 162, 54),
-		BlockMaterial = Enum.Material.SmoothPlastic,
+		Ground = "Grass", -- ground rule, see Config.GroundRules
+		Weather = "Wisps",
+		BannerColor = Color3.fromRGB(255, 226, 120),
+		LaneMaterial = Enum.Material.Grass,
+		SideMaterial = Enum.Material.LeafyGrass,
+		TerrainColors = { Grass = Color3.fromRGB(106, 190, 76), LeafyGrass = Color3.fromRGB(88, 160, 66) },
+		BlockMaterial = Enum.Material.WoodPlanks,
+		BlockFx = "Wood",
 		BlockColors = {
-			Color3.fromRGB(198, 98, 66),
-			Color3.fromRGB(172, 80, 56),
-			Color3.fromRGB(216, 132, 88),
-			Color3.fromRGB(150, 104, 72),
+			Color3.fromRGB(196, 132, 78),
+			Color3.fromRGB(170, 104, 62),
+			Color3.fromRGB(214, 160, 96),
+			Color3.fromRGB(150, 96, 60),
+		},
+		Lighting = {
+			ClockTime = 15.6,
+			Brightness = 2.6,
+			Ambient = Color3.fromRGB(120, 115, 125),
+			OutdoorAmbient = Color3.fromRGB(160, 150, 150),
+			Density = 0.3,
+			Haze = 1.4,
+			Glare = 0.25,
+			AtmosphereColor = Color3.fromRGB(210, 225, 255),
+			Decay = Color3.fromRGB(150, 180, 235),
+			Tint = Color3.fromRGB(255, 248, 240),
+			Saturation = 0.2,
+			Contrast = 0.08,
+			Bloom = 0.6,
 		},
 	},
 	{
-		Name = "Sky City",
-		EndsAt = 1250,
+		Name = "Ancient Jungle",
+		Key = "Jungle",
+		Icon = "🌴",
+		EndsAt = 1150,
 		ValueMult = 2.5,
-		GroundA = Color3.fromRGB(150, 196, 236),
-		GroundB = Color3.fromRGB(126, 176, 224),
-		Outer = Color3.fromRGB(104, 150, 204),
-		BlockMaterial = Enum.Material.SmoothPlastic,
+		Ground = "Grass",
+		Weather = "Leaves",
+		BannerColor = Color3.fromRGB(140, 255, 120),
+		LaneMaterial = Enum.Material.LeafyGrass,
+		SideMaterial = Enum.Material.Mud,
+		TerrainColors = { Mud = Color3.fromRGB(92, 72, 50) },
+		BlockMaterial = Enum.Material.Cobblestone,
+		BlockFx = "Stone",
 		BlockColors = {
-			Color3.fromRGB(96, 146, 236),
-			Color3.fromRGB(142, 184, 250),
-			Color3.fromRGB(226, 234, 255),
-			Color3.fromRGB(70, 112, 210),
+			Color3.fromRGB(128, 140, 112),
+			Color3.fromRGB(104, 122, 92),
+			Color3.fromRGB(150, 150, 128),
+			Color3.fromRGB(96, 110, 88),
+		},
+		Lighting = {
+			ClockTime = 9.2,
+			Brightness = 2.2,
+			Ambient = Color3.fromRGB(100, 120, 95),
+			OutdoorAmbient = Color3.fromRGB(130, 150, 120),
+			Density = 0.42,
+			Haze = 2.6,
+			Glare = 0.1,
+			AtmosphereColor = Color3.fromRGB(200, 230, 190),
+			Decay = Color3.fromRGB(110, 150, 110),
+			Tint = Color3.fromRGB(235, 255, 230),
+			Saturation = 0.25,
+			Contrast = 0.05,
+			Bloom = 0.5,
 		},
 	},
 	{
-		Name = "Neon Grid",
-		EndsAt = 2050,
-		ValueMult = 6,
-		GroundA = Color3.fromRGB(26, 30, 42),
-		GroundB = Color3.fromRGB(34, 40, 56),
-		Outer = Color3.fromRGB(18, 20, 30),
+		Name = "Volcanic Wasteland",
+		Key = "Volcanic",
+		Icon = "🌋",
+		EndsAt = 1800,
+		ValueMult = 5,
+		Ground = "Lava",
+		Weather = "Embers",
+		BannerColor = Color3.fromRGB(255, 140, 60),
+		LaneMaterial = Enum.Material.Basalt,
+		SideMaterial = Enum.Material.CrackedLava,
+		TerrainColors = { Basalt = Color3.fromRGB(56, 50, 52), CrackedLava = Color3.fromRGB(232, 92, 30) },
+		BlockMaterial = Enum.Material.Basalt,
+		BlockFx = "Stone",
+		BlockColors = {
+			Color3.fromRGB(70, 60, 62),
+			Color3.fromRGB(96, 70, 60),
+			Color3.fromRGB(120, 72, 50),
+			Color3.fromRGB(58, 52, 56),
+		},
+		Lighting = {
+			ClockTime = 17.9,
+			Brightness = 1.9,
+			Ambient = Color3.fromRGB(130, 70, 60),
+			OutdoorAmbient = Color3.fromRGB(150, 80, 60),
+			Density = 0.5,
+			Haze = 3,
+			Glare = 0.4,
+			AtmosphereColor = Color3.fromRGB(255, 150, 110),
+			Decay = Color3.fromRGB(120, 40, 30),
+			Tint = Color3.fromRGB(255, 215, 195),
+			Saturation = 0.15,
+			Contrast = 0.15,
+			Bloom = 0.9,
+		},
+	},
+	{
+		Name = "Frozen Frontier",
+		Key = "Frozen",
+		Icon = "❄️",
+		EndsAt = 2400,
+		ValueMult = 10,
+		Ground = "Ice",
+		Weather = "Snow",
+		BannerColor = Color3.fromRGB(170, 230, 255),
+		LaneMaterial = Enum.Material.Ice, -- the lane is slippery, so it looks it
+		SideMaterial = Enum.Material.Snow,
+		TerrainColors = {
+			Ice = Color3.fromRGB(176, 218, 245),
+			Snow = Color3.fromRGB(236, 244, 255),
+			Glacier = Color3.fromRGB(150, 206, 236),
+		},
+		BlockMaterial = Enum.Material.Snow,
+		BlockFx = "Snow",
+		BlockColors = {
+			Color3.fromRGB(226, 240, 255),
+			Color3.fromRGB(190, 220, 245),
+			Color3.fromRGB(160, 200, 240),
+			Color3.fromRGB(210, 230, 250),
+		},
+		Lighting = {
+			ClockTime = 19.2,
+			Brightness = 1.6,
+			Ambient = Color3.fromRGB(110, 125, 160),
+			OutdoorAmbient = Color3.fromRGB(120, 140, 180),
+			Density = 0.36,
+			Haze = 1.6,
+			Glare = 0.05,
+			AtmosphereColor = Color3.fromRGB(200, 220, 255),
+			Decay = Color3.fromRGB(90, 120, 200),
+			Tint = Color3.fromRGB(225, 240, 255),
+			Saturation = 0.05,
+			Contrast = 0.1,
+			Bloom = 0.8,
+		},
+	},
+	{
+		Name = "Neon Velocity",
+		Key = "Neon",
+		Icon = "⚡",
+		EndsAt = math.huge,
+		ValueMult = 20,
+		Ground = "Grass",
+		Weather = "Data",
+		BannerColor = Color3.fromRGB(120, 240, 255),
+		LaneMaterial = Enum.Material.Asphalt,
+		SideMaterial = Enum.Material.Pavement,
+		TerrainColors = { Asphalt = Color3.fromRGB(30, 30, 42), Pavement = Color3.fromRGB(44, 42, 60) },
 		BlockMaterial = Enum.Material.Neon,
+		BlockFx = "Energy",
 		BlockColors = {
 			Color3.fromRGB(60, 255, 130),
 			Color3.fromRGB(0, 210, 255),
 			Color3.fromRGB(190, 90, 255),
 			Color3.fromRGB(255, 70, 190),
 		},
-	},
-	{
-		Name = "Candy Peaks",
-		EndsAt = math.huge,
-		ValueMult = 15,
-		GroundA = Color3.fromRGB(255, 186, 222),
-		GroundB = Color3.fromRGB(255, 160, 206),
-		Outer = Color3.fromRGB(236, 136, 188),
-		BlockMaterial = Enum.Material.SmoothPlastic,
-		BlockColors = {
-			Color3.fromRGB(255, 120, 190),
-			Color3.fromRGB(186, 140, 255),
-			Color3.fromRGB(130, 236, 206),
-			Color3.fromRGB(255, 236, 140),
+		Lighting = {
+			ClockTime = 24.2, -- just after midnight (kept above 24 so blends go forwards)
+			Brightness = 1.2,
+			Ambient = Color3.fromRGB(80, 70, 120),
+			OutdoorAmbient = Color3.fromRGB(80, 70, 120),
+			Density = 0.32,
+			Haze = 1,
+			Glare = 0,
+			AtmosphereColor = Color3.fromRGB(120, 90, 200),
+			Decay = Color3.fromRGB(40, 20, 90),
+			Tint = Color3.fromRGB(230, 220, 255),
+			Saturation = 0.35,
+			Contrast = 0.2,
+			Bloom = 1.4,
 		},
 	},
+}
+
+-- How the ground behaves in each biome.
+Config.GroundRules = {
+	Grass = {},
+	-- The floor is lava: fast landings bounce you back up instead of sliding.
+	Lava = { BounceSpeed = 26, MinSpeed = 25, Keep = 0.9 },
+	-- Slippery: you slide much further.
+	Ice = { DecelMult = 0.25, DragMult = 0.3 },
 }
 
 --------------------------------------------------------------------------------
 -- Smashing, combos and coins
 --------------------------------------------------------------------------------
 
+-- Durability scales impact tiers. Armor only breaks above BreakSpeed (or with
+-- Meteor Breaker, TNT and shockwaves); slower hits bounce you off it.
 Config.Blocks = {
-	Block = { Value = 10, Slowdown = 0.035 },
-	Gold = { Value = 150, Slowdown = 0.02 },
-	TNT = { Value = 25, Slowdown = 0, BlastRadius = 13, Boost = 22, Lift = 32 },
+	Block = { Value = 10, Slowdown = 0.035, Durability = 1 },
+	Ice = { Value = 6, Slowdown = 0.006, Durability = 0.4 },
+	Gold = { Value = 150, Slowdown = 0.02, Durability = 1.2 },
+	TNT = { Value = 25, Slowdown = 0, Durability = 1, BlastRadius = 13, Boost = 22, Lift = 32 },
+	Armor = { Value = 60, Slowdown = 0.14, Durability = 3, BreakSpeed = 120 },
 }
+
+-- Impact effect tier (1 light .. 4 maximum) from speed and durability.
+function Config.ImpactTier(speed: number, durability: number, bonus: number?): number
+	local power = speed / (math.max(0.1, durability) * 45)
+	local tier = if power < 1.8 then 1 elseif power < 2.8 then 2 elseif power < 4 then 3 else 4
+	return math.clamp(tier + (bonus or 0), 1, 4)
+end
 
 Config.CritChance = 0.08
 Config.CritMultiplier = 3
@@ -121,17 +268,75 @@ Config.StarRadius = 3.5
 Config.RingRadius = 7
 Config.RingBoost = 35
 Config.RingLift = 28
+Config.BigRingRadius = 9.5 -- Neon Velocity accelerator gates
+Config.BigRingBoost = 50
 Config.CoinsPerStud = 2
+Config.PickupRadius = 4
 
--- Mid-air rocket boost (click / Space / A button / BOOST button while flying).
+-- Nitro Overdrive: the mid-air boost (click / Space / A button / NITRO button).
+-- An instant kick plus a short burst of thrust.
 Config.Boost = {
 	BaseCharges = 1, -- everyone gets one; Rocket Fuel adds more
-	Forward = 32, -- studs/s added along the lane
+	Impulse = 20, -- studs/s added along the lane instantly
+	Thrust = 40, -- studs/s^2 along the lane while thrusting
+	ThrustTime = 0.5,
 	Lift = 26, -- minimum upward speed after boosting
 	Cooldown = 0.35,
 }
 
--- Slow motion when TNT goes off.
+-- Power-up orbs on the course. Flying through one activates it.
+Config.Abilities = {
+	Meteor = {
+		Name = "METEOR BREAKER",
+		Icon = "☄️",
+		Duration = 4,
+		Color = Color3.fromRGB(255, 120, 40),
+		RadiusBonus = 3, -- extra smash radius
+	},
+	Rift = {
+		Name = "GRAVITY RIFT",
+		Icon = "🌌",
+		Duration = 5,
+		Color = Color3.fromRGB(170, 90, 255),
+		GravityMult = 0.35,
+		PullRadius = 22,
+		PullInterval = 0.12,
+		PullMax = 8, -- blocks pulled in per tick
+	},
+	Phase = {
+		Name = "PHASE OVERDRIVE",
+		Icon = "👻",
+		Duration = 4.5,
+		Color = Color3.fromRGB(120, 255, 255),
+	},
+	Shockwave = {
+		Name = "DEVASTATION",
+		Icon = "💥",
+		Duration = 0, -- instant
+		Color = Color3.fromRGB(255, 70, 70),
+		Radius = 26,
+		Lift = 34,
+		Boost = 18,
+		MaxBlocks = 80,
+	},
+}
+Config.AbilityOrder = { "Meteor", "Rift", "Phase", "Shockwave" }
+
+-- Falling this fast onto the ground triggers a small shockwave.
+Config.Slam = { MinSpeed = 85, Radius = 12, Cooldown = 1 }
+
+-- Course hazards and helpers (placed by CourseLayout, simulated by RunSim).
+Config.Hazards = {
+	Barrier = { SpeedKeep = 0.45 }, -- Neon laser walls
+	Log = { Radius = 3.2, Push = 45, Cooldown = 1 }, -- Jungle swinging logs
+	Geyser = { Radius = 6, Height = 70, Lift = 75, Push = 8, Cooldown = 0.8 }, -- Volcanic
+	Updraft = { Radius = 9, Height = 90, Accel = 150, Drift = 14, MaxTime = 2.5 }, -- Sky Kingdom air columns
+	Pad = { Radius = 6, Lift = 80, Push = 15, Cooldown = 0.5 }, -- bounce pads
+	BodyRadius = 2, -- flyer size for hazards
+	MinExitSpeed = 30, -- pads and geysers always send you forward at least this fast
+}
+
+-- Slow motion for TNT and maximum-tier impacts.
 Config.SlowMo = {
 	Duration = 0.35, -- real seconds
 	TimeScale = 0.3,
@@ -144,7 +349,11 @@ Config.SlowMo = {
 Config.Flight = {
 	BaseSpeed = 95, -- launch speed at 100% power with no upgrades
 	MinPower = 0.3, -- a quick tap still launches at 30%
-	LaunchAngle = 24, -- degrees above the horizon
+	LaunchAngle = 24, -- default aim, degrees above the horizon
+	MinAngle = 10, -- aim limits while in the slingshot
+	MaxAngle = 45,
+	MaxYaw = 15, -- degrees left/right of the lane
+	AimRate = 45, -- degrees per second with keys or a stick
 	ChargeTime = 1.3, -- seconds to charge from 0% to 100%
 	Gravity = 70,
 	AirDrag = 0.05, -- fraction of speed lost per second in the air
@@ -154,6 +363,8 @@ Config.Flight = {
 	BounceKeep = 0.88, -- horizontal speed kept on a bounce
 	MinBounceSpeed = 14,
 	StopSpeed = 5,
+	CrawlSpeed = 10, -- slower than this for CrawlTime seconds ends the launch
+	CrawlTime = 3.5,
 	BodyHeight = 1.3, -- root part height above ground while sliding
 	SteerAccel = 60,
 	MaxSideSpeed = 40,
@@ -350,17 +561,40 @@ function Config.ComboMultiplier(combo, maxMult)
 	return math.min(maxMult, 1 + math.floor(combo / Config.ComboStep))
 end
 
+-- The biggest biome coin multiplier.
+function Config.MaxZoneMult(): number
+	local best = 0
+	for _, zone in Config.Zones do
+		best = math.max(best, zone.ValueMult)
+	end
+	return best
+end
+
 -- Highest coin value a single smashed block can have before multipliers.
 function Config.MaxBlockValue()
 	local best = 0
 	for _, block in Config.Blocks do
 		best = math.max(best, block.Value)
 	end
-	local zoneMult = 0
-	for _, zone in Config.Zones do
-		zoneMult = math.max(zoneMult, zone.ValueMult)
-	end
-	return best * zoneMult
+	return best * Config.MaxZoneMult()
+end
+
+-- The server's sanity limits for a launch report, given the seconds it took.
+-- Shared so the tests can prove honest flights never hit them.
+function Config.LaunchLimits(stats, elapsed: number, totalBlocks: number)
+	return {
+		MaxDistance = math.min(Config.LaneLength + 20, elapsed * stats.LaunchSpeed * 2.5 + 40),
+		-- TNT chains and shockwaves smash dozens at once, but never hundreds per second.
+		MaxSmashes = math.min(totalBlocks, math.floor(100 + elapsed * 45)),
+	}
+end
+
+-- Most coins a launch with this many smashes and stars could possibly earn.
+function Config.CoinCeiling(stats, smashes: number, stars: number): number
+	return (
+		smashes * Config.MaxBlockValue() * stats.SmashCoinMult * stats.MaxComboMult * Config.CritMultiplier
+		+ stars * Config.StarValue * Config.MaxZoneMult()
+	) * stats.CoinMult
 end
 
 --------------------------------------------------------------------------------
@@ -406,10 +640,22 @@ Config.Trails = {
 		Colors = { Color3.fromRGB(190, 255, 60), Color3.fromRGB(40, 200, 80) },
 	},
 	{
+		Id = "Plasma",
+		Name = "Plasma",
+		Price = 35000,
+		Colors = { Color3.fromRGB(255, 255, 255), Color3.fromRGB(80, 220, 255), Color3.fromRGB(40, 90, 255) },
+	},
+	{
 		Id = "Galaxy",
 		Name = "Galaxy",
 		Price = 60000,
 		Colors = { Color3.fromRGB(120, 60, 255), Color3.fromRGB(255, 80, 200) },
+	},
+	{
+		Id = "Aurora",
+		Name = "Aurora",
+		Price = 90000,
+		Colors = { Color3.fromRGB(80, 255, 170), Color3.fromRGB(60, 200, 255), Color3.fromRGB(190, 90, 255) },
 	},
 	{
 		Id = "Rainbow",
@@ -433,30 +679,90 @@ end
 Config.DefaultSettings = {
 	Music = true,
 	SFX = true,
-	CameraShake = true,
+	CameraShake = true, -- shown as "Camera Effects": shake, FOV kicks, hit-stop, roll
 	SpeedLines = true,
 	Hints = true,
+	Performance = false, -- fewer particles, debris and shadows
 }
 
-Config.SettingsOrder = { "Music", "SFX", "CameraShake", "SpeedLines", "Hints" }
+Config.SettingsOrder = { "Music", "SFX", "CameraShake", "SpeedLines", "Hints", "Performance" }
 
 Config.SettingLabels = {
 	Music = "Music",
 	SFX = "SFX",
-	CameraShake = "Camera Shake",
+	CameraShake = "Camera Effects",
 	SpeedLines = "Speed Lines",
 	Hints = "Hints",
+	Performance = "Performance Mode",
 }
 
--- Built-in engine sounds work in every place without uploading anything.
+-- Effect budgets. The client picks one from the device and Performance Mode
+-- (see Client/Quality). Everything that can pile up has a cap here.
+Config.Quality = {
+	High = {
+		Name = "High",
+		MaxDebris = 80, -- smashed blocks simulated at once
+		DebrisTime = 1.8,
+		Particles = 1, -- particle amount multiplier
+		FloatText = 26,
+		BlockShadows = true,
+		ViewAhead = 560, -- course drawn this far ahead of you
+		ViewBehind = 60,
+		SpeedLines = 24,
+		Weather = 1,
+		Afterimages = 6,
+		Lightning = true,
+		HitStop = true,
+	},
+	Medium = {
+		Name = "Medium",
+		MaxDebris = 45,
+		DebrisTime = 1.4,
+		Particles = 0.6,
+		FloatText = 16,
+		BlockShadows = false,
+		ViewAhead = 440,
+		ViewBehind = 50,
+		SpeedLines = 16,
+		Weather = 0.6,
+		Afterimages = 4,
+		Lightning = true,
+		HitStop = true,
+	},
+	Low = {
+		Name = "Low",
+		MaxDebris = 20,
+		DebrisTime = 1,
+		Particles = 0.35,
+		FloatText = 8,
+		BlockShadows = false,
+		ViewAhead = 330,
+		ViewBehind = 40,
+		SpeedLines = 8,
+		Weather = 0.3,
+		Afterimages = 2,
+		Lightning = false,
+		HitStop = false,
+	},
+}
+
+-- Sounds built into the Roblox client work in every place without uploading
+-- anything. The client checks each one loads and swaps in the fallback if not.
 -- Paste an "rbxassetid://<id>" into Music to add background music.
 Config.Sounds = {
 	Music = "",
 	Launch = "rbxasset://sounds/action_jump.mp3",
-	Wind = "rbxasset://sounds/action_falling.mp3",
+	Wind = "rbxasset://sounds/action_falling.ogg",
 	Smash = "rbxasset://sounds/action_jump_land.mp3",
 	Coin = "rbxasset://sounds/electronicpingshort.wav",
 	Click = "rbxasset://sounds/electronicpingshort.wav",
+	Charge = "rbxasset://sounds/action_swim.mp3",
+	Splash = "rbxasset://sounds/impact_water.mp3",
+	GetUp = "rbxasset://sounds/action_get_up.mp3",
+}
+Config.SoundFallbacks = {
+	Coin = "rbxasset://sounds/action_get_up.mp3",
+	Click = "rbxasset://sounds/action_get_up.mp3",
 }
 
 return Config

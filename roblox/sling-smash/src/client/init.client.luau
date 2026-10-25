@@ -4,9 +4,10 @@
 	Game loop:  Lobby -> Aiming (in the slingshot) -> Charging (hold) -> Flying
 	            -> Results -> Retry / Return
 
-	Flight is simulated here with simple custom physics: the character is put in
-	PlatformStand and its root part is moved every frame, which replicates to
-	other players because the client owns its own character's physics.
+	The rules of a flight live in Shared/RunSim; this script steps it every
+	frame and turns its events into visuals, sound and camera moves. The
+	character is put in PlatformStand and its root part follows the simulation,
+	which replicates to other players because each client owns its character.
 ]]
 
 local ContextActionService = game:GetService("ContextActionService")
@@ -20,11 +21,15 @@ local Workspace = game:GetService("Workspace")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared:WaitForChild("Config"))
-local CourseLayout = require(Shared:WaitForChild("CourseLayout"))
 local Format = require(Shared:WaitForChild("Format"))
+local Physics = require(Shared:WaitForChild("Physics"))
+local RunSim = require(Shared:WaitForChild("RunSim"))
 
+local Atmosphere = require(script.Atmosphere)
 local Course = require(script.Course)
 local Effects = require(script.Effects)
+local FlightEvents = require(script.FlightEvents)
+local Quality = require(script.Quality)
 local UI = require(script.UI)
 
 local player = Players.LocalPlayer
@@ -38,9 +43,12 @@ local UpdateSettingRemote = remotes:WaitForChild("UpdateSetting") :: RemoteEvent
 
 local HOLD_STEP = "SlingSmashHold"
 local FLIGHT_STEP = "SlingSmashFlight"
+local BAND_STEP = "SlingSmashBands"
+local FINISH_STEP = "SlingSmashFinish"
 local CHARGE_ACTION = "SlingSmashCharge"
 local BOOST_ACTION = "SlingSmashBoost"
 local SUBSTEP = 1 / 120
+local F = Config.Flight
 
 local rng = Random.new()
 
@@ -55,7 +63,10 @@ local power = 0
 local chargeStart = 0
 local chargeInput: InputObject? = nil
 local maxAnnounced = false
-local flight = nil
+local aim = { Angle = F.LaunchAngle, Yaw = 0 }
+local drag = nil -- { Start: Vector2, Angle, Yaw } while charging with a pointer
+local run = nil -- RunSim for the current launch
+local flight = nil -- client-side presentation state for the current launch
 
 local character: Model? = nil
 local humanoid: Humanoid? = nil
@@ -99,31 +110,43 @@ local function camera(): Camera
 	return Workspace.CurrentCamera :: Camera
 end
 
+local function cameraEffectsOn(): boolean
+	return data == nil or data.Settings.CameraShake ~= false
+end
+
 --------------------------------------------------------------------------------
 -- Helpers
 --------------------------------------------------------------------------------
 
--- -1 (left) .. 1 (right). Works with keyboard, thumbstick and gamepad.
-local function steerInput(): number
-	local x = 0
+-- Movement input as (x = right, z = back). Works with keyboard, sticks and touch.
+local function moveInput(): Vector3
 	if controls then
 		local ok, move = pcall(function()
 			return controls:GetMoveVector()
 		end)
-		if ok and typeof(move) == "Vector3" then
-			x = move.X
+		if ok and typeof(move) == "Vector3" and move.Magnitude > 0.05 then
+			return move
 		end
 	end
-	if math.abs(x) < 0.05 then
-		x = 0
-		if UserInputService:IsKeyDown(Enum.KeyCode.A) or UserInputService:IsKeyDown(Enum.KeyCode.Left) then
-			x -= 1
-		end
-		if UserInputService:IsKeyDown(Enum.KeyCode.D) or UserInputService:IsKeyDown(Enum.KeyCode.Right) then
-			x += 1
-		end
+	local x, z = 0, 0
+	if UserInputService:IsKeyDown(Enum.KeyCode.A) or UserInputService:IsKeyDown(Enum.KeyCode.Left) then
+		x -= 1
 	end
-	return math.clamp(x, -1, 1)
+	if UserInputService:IsKeyDown(Enum.KeyCode.D) or UserInputService:IsKeyDown(Enum.KeyCode.Right) then
+		x += 1
+	end
+	if UserInputService:IsKeyDown(Enum.KeyCode.W) or UserInputService:IsKeyDown(Enum.KeyCode.Up) then
+		z -= 1
+	end
+	if UserInputService:IsKeyDown(Enum.KeyCode.S) or UserInputService:IsKeyDown(Enum.KeyCode.Down) then
+		z += 1
+	end
+	return Vector3.new(x, 0, z)
+end
+
+-- -1 (left) .. 1 (right).
+local function steerInput(): number
+	return math.clamp(moveInput().X, -1, 1)
 end
 
 local function setFlyerMode(enabled: boolean)
@@ -177,20 +200,25 @@ local function setPromptsEnabled(enabled: boolean)
 	ProximityPromptService.Enabled = enabled
 end
 
+local function aimFlat(): Vector3
+	return Physics.AimDirection(0, aim.Yaw)
+end
+
 local function pouchCFrame(amount: number): CFrame
-	local back = Config.PouchRestOffset + Config.PouchPullDistance * amount
-	local position = Config.SlingshotPosition + Vector3.new(0, Config.PouchHeight - amount * 1.2, back)
-	return CFrame.lookAt(position, position + Config.Forward)
+	local position = Physics.PouchPosition(amount)
+	return CFrame.lookAt(position, position + aimFlat())
 end
 
 --------------------------------------------------------------------------------
--- Slingshot bands (local visuals while aiming)
+-- Slingshot bands: stretch, heat up and vibrate with tension; snap back after
 --------------------------------------------------------------------------------
 
 local bands: { BasePart } = {}
 local hiddenSlingParts: { BasePart } = {}
+local recoil = nil -- { Start, From }
+local BAND_REST = Config.SlingshotPosition + Vector3.new(0, Config.SlingshotArmTip - 0.6, 0.3)
 
-local function makeBand(): Part
+local function makeBand(): BasePart
 	local band = Instance.new("Part")
 	band.Name = "SlingBand"
 	band.Anchored = true
@@ -213,7 +241,6 @@ local function setBandsVisible(visible: boolean)
 	for _, band in bands do
 		band.Transparency = if visible then 0 else 1
 	end
-
 	-- Hide the server's resting band locally while our stretched bands show.
 	local map = Workspace:FindFirstChild("Map")
 	local slingshot = map and map:FindFirstChild("Slingshot")
@@ -230,17 +257,139 @@ local function setBandsVisible(visible: boolean)
 	end
 end
 
-local function updateBands(pouch: Vector3)
+local BAND_COLD = Color3.fromRGB(255, 120, 60)
+local BAND_TENSE = Color3.fromRGB(255, 40, 40)
+local BAND_HOT = Color3.fromRGB(255, 240, 200)
+
+local function updateBands(pouch: Vector3, tension: number)
 	local base = Config.SlingshotPosition
 	local tipY = Config.SlingshotArmTip - 0.6
+	-- Shiver at high tension.
+	if tension > 0.6 then
+		local amount = (tension - 0.6) / 0.4 * 0.09
+		pouch += Vector3.new(rng:NextNumber(-amount, amount), rng:NextNumber(-amount, amount), 0)
+	end
+	local color = if tension < 0.7
+		then BAND_COLD:Lerp(BAND_TENSE, tension / 0.7)
+		else BAND_TENSE:Lerp(BAND_HOT, (tension - 0.7) / 0.3)
+	local width = 0.45 - 0.22 * math.clamp(tension, 0, 1)
 	for i, side in { -1, 1 } do
 		local band = bands[i]
 		if band then
 			local tip = base + Vector3.new(side * Config.SlingshotArmSpread, tipY, 0)
 			local length = (pouch - tip).Magnitude
-			band.Size = Vector3.new(0.45, 0.45, length)
+			band.Size = Vector3.new(width, width, math.max(0.1, length))
 			band.CFrame = CFrame.lookAt((tip + pouch) / 2, pouch)
+			band.Color = color
 		end
+	end
+end
+
+-- After release the bands snap forward, overshoot and settle.
+local function bandRecoilStep(_dt: number)
+	local r = recoil
+	if not r then
+		unbindStep(BAND_STEP)
+		return
+	end
+	local t = os.clock() - r.Start
+	if t > 0.6 then
+		recoil = nil
+		unbindStep(BAND_STEP)
+		setBandsVisible(false)
+		return
+	end
+	local offset = (r.From - BAND_REST) * math.exp(-7 * t) * math.cos(t * 26)
+	updateBands(BAND_REST + offset, 0)
+end
+
+local function startBandRecoil(from: Vector3)
+	recoil = { Start = os.clock(), From = from }
+	bindStep(BAND_STEP, bandRecoilStep)
+end
+
+--------------------------------------------------------------------------------
+-- Trajectory preview: marching dots along the predicted arc
+--------------------------------------------------------------------------------
+
+local DOTS = 26
+local aimFolder = Instance.new("Folder")
+aimFolder.Name = "SlingAim"
+aimFolder.Parent = Workspace
+local dots: { BasePart } = {}
+local landing: BasePart? = nil
+local predicted: { Vector3 } = {}
+local predictedKey = ""
+local landingVisible = false
+
+local function aimPart(props): BasePart
+	local p = Instance.new("Part")
+	p.Anchored = true
+	p.CanCollide = false
+	p.CanQuery = false
+	p.CanTouch = false
+	p.CastShadow = false
+	p.Material = Enum.Material.Neon
+	for key, value in props do
+		(p :: any)[key] = value
+	end
+	p.Parent = aimFolder
+	return p
+end
+
+local function setTrajectoryVisible(visible: boolean)
+	if #dots == 0 then
+		for i = 1, DOTS do
+			local size = 0.75 - 0.45 * (i - 1) / (DOTS - 1)
+			table.insert(dots, aimPart({ Name = "AimDot", Shape = Enum.PartType.Ball, Size = Vector3.new(size, size, size), Transparency = 1 }))
+		end
+		landing = aimPart({
+			Name = "AimLanding",
+			Shape = Enum.PartType.Cylinder,
+			Size = Vector3.new(0.2, 6, 6),
+			Transparency = 1,
+		})
+	end
+	if not visible then
+		for _, dot in dots do
+			dot.Transparency = 1
+		end
+		if landing then
+			landing.Transparency = 1
+		end
+	end
+end
+
+local function updateTrajectory(launchPower: number)
+	local key = string.format("%.3f:%.1f:%.1f", launchPower, aim.Angle, aim.Yaw)
+	if key ~= predictedKey then
+		predictedKey = key
+		local velocity = Physics.LaunchVelocity(stats, launchPower, aim.Angle, aim.Yaw)
+		local points, land, landed = Physics.Predict(stats, Physics.PouchPosition(launchPower), velocity, 10, 1 / 30)
+		predicted = points
+		landingVisible = landed
+		if landing then
+			landing.CFrame = CFrame.new(Vector3.new(land.X, Config.GroundY + 0.12, land.Z)) * CFrame.Angles(0, 0, math.pi / 2)
+		end
+	end
+	-- Dots march outward along the arc.
+	local count = #predicted
+	local phase = (os.clock() * 2.5) % 1
+	local hot = Color3.fromRGB(255, 255, 255):Lerp(Color3.fromRGB(255, 220, 90), launchPower)
+	for i, dot in dots do
+		local index = math.floor((i - 1 + phase) * 1.5) + 1
+		local point = predicted[index]
+		if point and index <= count then
+			dot.CFrame = CFrame.new(point)
+			dot.Color = hot
+			dot.Transparency = 0.15 + 0.6 * (i / DOTS)
+		else
+			dot.Transparency = 1
+		end
+	end
+	if landing then
+		landing.Color = hot
+		landing.Transparency = if landingVisible then 0.45 + 0.2 * math.sin(os.clock() * 6) else 1
 	end
 end
 
@@ -250,27 +399,37 @@ end
 
 local enterAiming, startFlight, returnToLobby, boost
 
+local function updateAim(dt: number)
+	local move = moveInput()
+	aim.Angle = math.clamp(aim.Angle - move.Z * F.AimRate * dt, F.MinAngle, F.MaxAngle)
+	aim.Yaw = math.clamp(aim.Yaw + move.X * F.AimRate * 0.6 * dt, -F.MaxYaw, F.MaxYaw)
+end
+
 local function aimCamera(amount: number, dt: number)
-	local pouch = pouchCFrame(amount).Position
-	local position = pouch + Vector3.new(0, 5 + amount, 14 + amount * 3)
-	local target = pouch + Config.Forward * 40 + Vector3.new(0, 2, 0)
+	local pouch = Physics.PouchPosition(amount)
+	local flat = aimFlat()
+	local position = pouch - flat * (14 + amount * 3) + Vector3.new(0, 5 + amount + (aim.Angle - F.LaunchAngle) * 0.08, 0)
+	local target = pouch + Physics.AimDirection(aim.Angle * 0.45, aim.Yaw) * 40 + Vector3.new(0, 2, 0)
 	local cam = camera()
 	cam.CameraType = Enum.CameraType.Scriptable
 	cam.CFrame = CFrame.lookAt(position, target) * Effects.ShakeOffset(dt)
-	cam.FieldOfView = 70 + amount * 6
+	cam.FieldOfView = 70 + amount * (if cameraEffectsOn() then 6 else 3)
 end
 
 local function holdStep(dt: number)
 	if state == "Charging" then
-		power = math.min(1, (os.clock() - chargeStart) / Config.Flight.ChargeTime)
+		power = math.min(1, (os.clock() - chargeStart) / F.ChargeTime)
 		if power >= 1 and not maxAnnounced then
 			maxAnnounced = true
 			UI.Pop("MAX POWER!", "max")
-			Effects.Play("Coin", 1.6)
+			Effects.Overcharge(Physics.PouchPosition(1))
 		end
 		if power > 0.6 then
 			Effects.Shake(0.08 * power)
 		end
+	end
+	if not drag then
+		updateAim(dt)
 	end
 	local cf = pouchCFrame(power)
 	if root then
@@ -278,15 +437,25 @@ local function holdStep(dt: number)
 		root.AssemblyLinearVelocity = Vector3.zero
 		root.AssemblyAngularVelocity = Vector3.zero
 	end
-	updateBands(cf.Position + Vector3.new(0, 0, 1.2))
+	updateBands(cf.Position + aimFlat() * 1.2, if state == "Charging" then power else 0)
 	aimCamera(power, dt)
-	UI.SetPower(power, if state == "Charging" then "charging" else "aim")
+	updateTrajectory(if state == "Charging" then power else 1)
+	if state == "Charging" then
+		Effects.UpdateCharge(cf.Position, power)
+	end
+	UI.SetPower(power, if state == "Charging" then "charging" else "aim", aim.Angle, aim.Yaw)
 end
 
 local function unbindAiming()
 	unbindStep(HOLD_STEP)
 	ContextActionService:UnbindAction(CHARGE_ACTION)
-	setBandsVisible(false)
+	Effects.StopCharge()
+	setTrajectoryVisible(false)
+	drag = nil
+end
+
+local function isPointerInput(input: InputObject): boolean
+	return input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch
 end
 
 local function startCharging(input: InputObject?)
@@ -297,7 +466,11 @@ local function startCharging(input: InputObject?)
 	chargeStart = os.clock()
 	chargeInput = input
 	maxAnnounced = false
-	Effects.Play("Click", 0.8)
+	if input and isPointerInput(input) then
+		drag = { Start = Vector2.new(input.Position.X, input.Position.Y), Angle = aim.Angle, Yaw = aim.Yaw }
+	end
+	Effects.StartCharge(Physics.PouchPosition(0))
+	Effects.Play("Click", 0.7)
 end
 
 local function releaseCharge()
@@ -305,12 +478,10 @@ local function releaseCharge()
 		return
 	end
 	local launchPower = power
+	local pouch = pouchCFrame(launchPower).Position + aimFlat() * 1.2
 	unbindAiming()
+	startBandRecoil(pouch)
 	startFlight(launchPower)
-end
-
-local function isPointerInput(input: InputObject): boolean
-	return input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch
 end
 
 local function chargeAction(_actionName: string, inputState: Enum.UserInputState, input: InputObject)
@@ -338,14 +509,21 @@ enterAiming = function()
 
 	UI.ClosePanels()
 	UI.HideResults()
+	unbindStep(FINISH_STEP)
 	course:Reset()
+	course:SetView(0)
 	setFlyerMode(true)
 
 	state = "Aiming"
 	power = 0
 	chargeInput = nil
+	drag = nil
+	predictedKey = ""
 	setPromptsEnabled(false)
+	recoil = nil
+	unbindStep(BAND_STEP)
 	setBandsVisible(true)
+	setTrajectoryVisible(true)
 	bindStep(HOLD_STEP, holdStep)
 	ContextActionService:BindActionAtPriority(
 		CHARGE_ACTION,
@@ -358,7 +536,7 @@ enterAiming = function()
 	)
 
 	UI.SetMode("Aiming")
-	UI.SetPower(0, "aim")
+	UI.SetPower(0, "aim", aim.Angle, aim.Yaw)
 	UI.SetRunCoins(0, true)
 	Effects.Play("Click", 1)
 end
@@ -368,6 +546,7 @@ local function cancelAim()
 		return
 	end
 	unbindAiming()
+	setBandsVisible(false)
 	returnToLobby()
 end
 
@@ -378,9 +557,27 @@ UserInputService.InputBegan:Connect(function(input, processed)
 	if state == "Aiming" then
 		startCharging(input)
 	elseif state == "Flying" and input.UserInputType == Enum.UserInputType.MouseButton1 then
-		-- Mouse clicks boost; phones use the BOOST button so stray taps don't waste charges.
+		-- Mouse clicks boost; phones use the NITRO button so stray taps don't waste charges.
 		boost()
 	end
+end)
+
+-- Dragging while charging aims like pulling a real slingshot: drag down to
+-- aim higher, drag left to aim right.
+UserInputService.InputChanged:Connect(function(input)
+	local d = drag
+	if state ~= "Charging" or not d or not chargeInput then
+		return
+	end
+	local matches = input == chargeInput
+		or (chargeInput.UserInputType == Enum.UserInputType.MouseButton1 and input.UserInputType == Enum.UserInputType.MouseMovement)
+	if not matches then
+		return
+	end
+	local viewport = camera().ViewportSize
+	local delta = Vector2.new(input.Position.X, input.Position.Y) - d.Start
+	aim.Angle = math.clamp(d.Angle + delta.Y / math.max(1, viewport.Y) * 70, F.MinAngle, F.MaxAngle)
+	aim.Yaw = math.clamp(d.Yaw - delta.X / math.max(1, viewport.X) * 40, -F.MaxYaw, F.MaxYaw)
 end)
 
 UserInputService.InputEnded:Connect(function(input)
@@ -396,258 +593,85 @@ UserInputService.InputEnded:Connect(function(input)
 end)
 
 --------------------------------------------------------------------------------
--- Flight
+-- Flight events: RunSim decides, this makes it look and sound right
 --------------------------------------------------------------------------------
 
 local finishFlight
 
-local function registerSmash(f, entry)
-	local info = Config.Blocks[entry.Data.Kind] or Config.Blocks.Block
-	f.Smashes += 1
-	if f.ComboTimer > 0 then
-		f.Combo += 1
-	else
-		f.Combo = 1
-	end
-	f.ComboTimer = stats.ComboWindow
-	f.MaxCombo = math.max(f.MaxCombo, f.Combo)
+local events = FlightEvents.new({
+	Course = course,
+	GetRun = function()
+		return run
+	end,
+	GetFlight = function()
+		return flight
+	end,
+	GetCharacter = function()
+		return character
+	end,
+	CameraEffectsOn = cameraEffectsOn,
+})
 
-	local multiplier = Config.ComboMultiplier(f.Combo, stats.MaxComboMult)
-	local crit = rng:NextNumber() < Config.CritChance
-	local zone = Config.Zones[entry.Data.Zone]
-	local coins = math.floor(
-		info.Value
-			* zone.ValueMult
-			* stats.SmashCoinMult
-			* multiplier
-			* (if crit then Config.CritMultiplier else 1)
-			* stats.CoinMult
-	)
-	f.RunCoins += coins
-	if entry.Data.Kind == "Gold" then
-		f.Gold += 1
-	elseif entry.Data.Kind == "TNT" then
-		f.TNT += 1
-	end
+--------------------------------------------------------------------------------
+-- Flight loop
+--------------------------------------------------------------------------------
 
-	-- Gold and TNT always look the same; normal blocks vary by zone and colour.
-	local sparkKey = if entry.Data.Kind == "Block"
-		then "Block:" .. entry.Data.Zone .. ":" .. entry.Data.ColorIndex
-		else entry.Data.Kind
-	Effects.Burst(entry.Position, sparkKey, entry.Part.Color, if crit then 14 else 6)
-	Effects.Play("Smash", rng:NextNumber(0.85, 1.35), 0.05)
-	if crit then
-		UI.Pop("CRITICAL!", "crit")
-		Effects.Shake(1.2)
-		Effects.FloatText(entry.Position + Vector3.new(0, 3, 0), "+" .. Format.Short(coins), Color3.fromRGB(255, 170, 40), 1.4)
-	else
-		Effects.Shake(0.35)
-		Effects.FloatText(entry.Position + Vector3.new(0, 2, 0), "+" .. Format.Short(coins), Color3.fromRGB(220, 150, 255), 1)
-	end
-end
-
-local function explode(f, first)
-	local queue = { first }
-	local explosions = 0
-	while #queue > 0 do
-		local entry = table.remove(queue, 1)
-		local info = Config.Blocks.TNT
-		explosions += 1
-		if explosions <= 4 then
-			Effects.Explosion(entry.Position, info.BlastRadius)
-		end
-		for _, other in course:BlocksNear(entry.Position, info.BlastRadius) do
-			local away = other.Position - entry.Position
-			local push = if away.Magnitude > 0.01 then away.Unit * 45 else Vector3.zero
-			course:Smash(other, f.Velocity * 0.4 + push)
-			registerSmash(f, other)
-			if other.Data.Kind == "TNT" then
-				table.insert(queue, other)
-			end
-		end
-	end
-	f.Velocity += Config.Forward * Config.Blocks.TNT.Boost
-	f.Velocity = Vector3.new(f.Velocity.X, math.max(f.Velocity.Y, Config.Blocks.TNT.Lift), f.Velocity.Z)
-	f.Grounded = false
-	f.FovKick = 10
-	f.SlowMo = Config.SlowMo.Duration
-	Effects.Shake(2.2)
-	Effects.Flash(Color3.fromRGB(255, 170, 60), 0.35)
-	UI.Pop("BOOM!", "crit")
-end
-
-local function onBlock(entry)
+local function flightCamera(dt: number, speed: number, steer: number)
 	local f = flight
-	if not f or entry.Broken then
-		return
-	end
-	local info = Config.Blocks[entry.Data.Kind] or Config.Blocks.Block
-	course:Smash(entry, f.Velocity)
-	registerSmash(f, entry)
-	f.Velocity *= 1 - info.Slowdown * stats.SmashSlow
-	if entry.Data.Kind == "TNT" then
-		explode(f, entry)
-	end
-end
+	local r = run
+	local camFx = cameraEffectsOn()
+	local velocity = r.Velocity
+	local flat = Vector3.new(velocity.X, 0, velocity.Z)
+	local lookAhead = if flat.Magnitude > 1 then flat.Unit else Config.Forward
+	local back = -Config.Forward
+	local desired = r.Position
+		+ Vector3.new(0, 7 + math.min(speed, 200) * 0.02, 0)
+		+ back * (20 + math.min(speed, 220) * 0.03)
+		- Vector3.new(velocity.X * 0.06, 0, 0)
+	-- A little lag sells momentum without losing the flyer.
+	f.CameraPosition = f.CameraPosition:Lerp(desired, 1 - math.exp(-10 * dt))
+	local look = r.Position + Config.Forward * 14 + lookAhead * math.min(speed, 160) * 0.05 + Vector3.new(0, 1.5, 0)
+	local targetRoll = if camFx then -steer * 0.05 else 0
+	f.Roll += (targetRoll - f.Roll) * math.min(1, dt * 5)
 
-local function onStar(star)
-	local f = flight
-	if not f then
-		return
-	end
-	course:CollectStar(star)
-	f.Stars += 1
-	local zone = Config.Zones[star.Data.Zone]
-	local coins = math.floor(Config.StarValue * zone.ValueMult * stats.CoinMult)
-	f.RunCoins += coins
-	Effects.Play("Coin", 1.25)
-	Effects.Flash(Color3.fromRGB(255, 225, 90), 0.25)
-	Effects.FloatText(star.Position, "⭐ +" .. Format.Short(coins), Color3.fromRGB(255, 220, 60), 1.6)
-end
-
-local function onRing(ring)
-	local f = flight
-	if not f then
-		return
-	end
-	course:UseRing(ring)
-	f.Rings += 1
-	f.Velocity += Config.Forward * Config.RingBoost
-	f.Velocity = Vector3.new(f.Velocity.X, math.max(f.Velocity.Y, Config.RingLift), f.Velocity.Z)
-	f.Grounded = false
-	f.FovKick = 14
-	UI.Pop("BOOST!", "boost")
-	Effects.Flash(Color3.fromRGB(80, 230, 255), 0.3)
-	Effects.Play("Launch", 1.4)
-	Effects.Shake(0.8)
-end
-
--- Mid-air rocket boost; limited charges per launch (Rocket Fuel adds more).
-boost = function()
-	local f = flight
-	if not f or f.Done or f.Boosts <= 0 or f.BoostCooldown > 0 then
-		return
-	end
-	f.Boosts -= 1
-	f.BoostCooldown = Config.Boost.Cooldown
-	f.Velocity += Config.Forward * Config.Boost.Forward
-	f.Velocity = Vector3.new(f.Velocity.X, math.max(f.Velocity.Y, Config.Boost.Lift), f.Velocity.Z)
-	f.Grounded = false
-	f.FovKick = 12
-	UI.SetBoosts(f.Boosts)
-	UI.Pop("🚀 BOOST!", "boost")
-	Effects.Flash(Color3.fromRGB(255, 170, 60), 0.25)
-	Effects.Burst(f.Position, "boost", Color3.fromRGB(255, 150, 40), 20)
-	Effects.Play("Launch", 1.2)
-	Effects.Shake(0.9)
-end
-
--- One fixed physics substep of length h.
-local function simulate(f, h: number, steer: number)
-	local F = Config.Flight
-	local previous = f.Position
-	local velocity = f.Velocity
-	f.Time += h
-
-	-- Steering (sideways only).
-	local vx = velocity.X + steer * stats.Steer * h
-	if steer == 0 then
-		vx -= vx * math.min(1, F.SideDamping * h)
-	end
-	vx = math.clamp(vx, -F.MaxSideSpeed, F.MaxSideSpeed)
-	velocity = Vector3.new(vx, velocity.Y, velocity.Z)
-
-	if f.Grounded then
-		local horizontal = Vector3.new(velocity.X, 0, velocity.Z)
-		local speed = horizontal.Magnitude
-		if speed > 1e-3 then
-			local newSpeed = math.max(0, speed - F.GroundDecel * h) * (1 - math.min(1, F.GroundDrag * h))
-			horizontal *= newSpeed / speed
-		end
-		velocity = Vector3.new(horizontal.X, math.max(0, velocity.Y), horizontal.Z)
-		if velocity.Y > 0 then
-			f.Grounded = false
-		end
-	else
-		velocity *= 1 - math.min(1, F.AirDrag * h)
-		velocity -= Vector3.new(0, stats.Gravity * h, 0)
-	end
-
-	local position = previous + velocity * h
-
-	-- Bounce off the lane rails.
-	local limit = Config.LaneWidth / 2 - 1.5
-	if math.abs(position.X) > limit then
-		position = Vector3.new(math.sign(position.X) * limit, position.Y, position.Z)
-		velocity = Vector3.new(-velocity.X * 0.4, velocity.Y, velocity.Z)
-	end
-
-	-- Ground: bounce when falling fast, otherwise start sliding.
-	local floor = Config.GroundY + F.BodyHeight
-	if position.Y <= floor then
-		position = Vector3.new(position.X, floor, position.Z)
-		if velocity.Y < -F.MinBounceSpeed then
-			velocity = Vector3.new(velocity.X * F.BounceKeep, -velocity.Y * F.Bounce, velocity.Z * F.BounceKeep)
-			Effects.Shake(0.7)
-			Effects.Play("Smash", 0.7, 0.1)
-		elseif velocity.Y <= 0 then
-			velocity = Vector3.new(velocity.X, 0, velocity.Z)
-			f.Grounded = true
-		end
-	end
-
-	-- End of the lane.
-	if -position.Z >= Config.LaneLength then
-		f.Position = Vector3.new(position.X, position.Y, -Config.LaneLength)
-		f.Velocity = Vector3.zero
-		f.Done = "finish"
-		return
-	end
-
-	f.Position = position
-	f.Velocity = velocity
-
-	course:Sweep(previous, position, stats.HitRadius, onBlock, onStar, onRing)
-
-	if f.ComboTimer > 0 then
-		f.ComboTimer -= h
-		if f.ComboTimer <= 0 then
-			f.Combo = 0
-		end
-	end
-
-	local horizontalSpeed = Vector3.new(f.Velocity.X, 0, f.Velocity.Z).Magnitude
-	if f.Grounded and horizontalSpeed < F.StopSpeed then
-		f.Done = "stopped"
-	elseif f.Time > F.MaxFlightTime then
-		f.Done = "timeout"
-	end
+	local cam = camera()
+	cam.CameraType = Enum.CameraType.Scriptable
+	cam.CFrame = CFrame.lookAt(f.CameraPosition, look) * CFrame.Angles(0, 0, f.Roll) * Effects.ShakeOffset(dt)
+	f.FovKick = math.max(0, f.FovKick - dt * 25)
+	local fovScale = if camFx then 1 else 0.4
+	cam.FieldOfView = 70 + (math.clamp(speed * 0.1, 0, 22) + f.FovKick) * fovScale
 end
 
 local function flightStep(dt: number)
 	local f = flight
-	if not f then
+	local r = run
+	if not f or not r then
 		return
 	end
 	dt = math.min(dt, 0.1)
-	-- TNT slow motion: the world slows down, the camera keeps real time.
+
+	-- Hit-stop freezes the world for a heartbeat; slow motion stretches it.
 	local simDt = dt
-	if f.SlowMo > 0 then
+	if f.HitStop > 0 then
+		f.HitStop -= dt
+		simDt = 0
+	elseif f.SlowMo > 0 then
 		f.SlowMo -= dt
 		simDt = dt * Config.SlowMo.TimeScale
 	end
-	f.BoostCooldown = math.max(0, f.BoostCooldown - dt)
-	local steps = math.max(1, math.ceil(simDt / SUBSTEP))
-	local h = simDt / steps
 	local steer = steerInput()
-	for _ = 1, steps do
-		simulate(f, h, steer)
-		if f.Done then
-			break
+	if simDt > 0 then
+		local steps = math.max(1, math.ceil(simDt / SUBSTEP))
+		local h = simDt / steps
+		for _ = 1, steps do
+			r:Step(h, steer)
+			if r.Done then
+				break
+			end
 		end
 	end
 
-	local velocity = f.Velocity
+	local velocity = r.Velocity
 	local speed = velocity.Magnitude
 
 	-- Pose: superman-style, head first, rolling into turns.
@@ -656,8 +680,8 @@ local function flightStep(dt: number)
 		direction = Config.Forward
 	end
 	direction = direction.Unit
-	local wobble = if f.Grounded then 0 else math.sin(f.Time * 7) * 0.12
-	local pose = CFrame.lookAt(f.Position, f.Position + direction)
+	local wobble = if r.Grounded then 0 else math.sin(r.Time * 7) * 0.12
+	local pose = CFrame.lookAt(r.Position, r.Position + direction)
 		* CFrame.Angles(-math.pi / 2, 0, 0)
 		* CFrame.Angles(0, -steer * 0.5 + wobble, 0)
 	if root then
@@ -666,65 +690,44 @@ local function flightStep(dt: number)
 		root.AssemblyAngularVelocity = Vector3.zero
 	end
 
-	-- Chase camera.
-	local cam = camera()
-	local desired = f.Position + Vector3.new(0, 7 + math.min(speed, 200) * 0.02, 20)
-	f.CameraPosition = f.CameraPosition:Lerp(desired, 1 - math.exp(-12 * dt))
-	local look = f.Position + Config.Forward * 14 + Vector3.new(0, 1.5, 0)
-	cam.CameraType = Enum.CameraType.Scriptable
-	cam.CFrame = CFrame.lookAt(f.CameraPosition, look) * Effects.ShakeOffset(dt)
-	f.FovKick = math.max(0, f.FovKick - dt * 25)
-	cam.FieldOfView = 70 + math.clamp(speed * 0.1, 0, 22) + f.FovKick
+	flightCamera(dt, speed, steer)
 
 	-- HUD + effects.
-	local distance = math.max(0, -f.Position.Z)
+	local distance = r:Distance()
 	UI.SetDistance(math.floor(distance))
-	UI.SetRunCoins(f.RunCoins)
-	local multiplier = Config.ComboMultiplier(f.Combo, stats.MaxComboMult)
-	UI.SetCombo(multiplier, f.ComboTimer / stats.ComboWindow, multiplier >= 2 and f.ComboTimer > 0)
-	Effects.UpdateSpeedLines(dt, math.clamp((speed - 50) / 120, 0, 1))
-	Effects.SetWind(speed / 150)
-	course:Update(f.Position)
-
-	local zoneIndex = CourseLayout.ZoneIndexAt(distance)
-	if zoneIndex > f.Zone then
-		f.Zone = zoneIndex
-		UI.Banner("🌍 " .. string.upper(Config.Zones[zoneIndex].Name))
+	UI.SetRunCoins(r.RunCoins)
+	local multiplier = Config.ComboMultiplier(r.Combo, stats.MaxComboMult)
+	UI.SetCombo(multiplier, r.ComboTimer / stats.ComboWindow, multiplier >= 2 and r.ComboTimer > 0)
+	if r.Ability then
+		UI.SetAbility(r.Ability.Kind, r.Ability.TimeLeft / r.Ability.Duration)
 	end
+	local thrusting = r.Thrust > 0
+	Effects.UpdateFlight(pose, velocity, dt, thrusting)
+	Effects.UpdateSpeedLines(dt, math.clamp((speed - 50) / 120, 0, 1) + (if thrusting then 0.5 else 0))
+	Effects.SetWind(speed / 150)
+	course:Update(dt, r.Position, r.Time)
+	Atmosphere.Update(distance, camera().CFrame)
 
-	if f.Done then
-		finishFlight(f.Done)
+	if r.Done then
+		finishFlight(r.Done)
 	end
 end
 
 startFlight = function(launchPower: number)
-	local F = Config.Flight
-	local speed = stats.LaunchSpeed * (F.MinPower + (1 - F.MinPower) * launchPower)
-	local angle = math.rad(F.LaunchAngle)
-	local start = pouchCFrame(launchPower).Position
-
+	local start = Physics.PouchPosition(launchPower)
+	local velocity = Physics.LaunchVelocity(stats, launchPower, aim.Angle, aim.Yaw)
+	run = RunSim.new(stats, start, velocity, { Rng = Random.new(), Events = events })
 	local f = {
-		Position = start,
-		Velocity = (Config.Forward * math.cos(angle) + Vector3.yAxis * math.sin(angle)) * speed,
-		Time = 0,
-		Grounded = false,
-		Combo = 0,
-		ComboTimer = 0,
-		MaxCombo = 0,
-		RunCoins = 0,
-		Smashes = 0,
-		Stars = 0,
-		Rings = 0,
-		Gold = 0,
-		TNT = 0,
-		Boosts = stats.BoostCharges,
-		BoostCooldown = 0,
-		SlowMo = 0,
-		Zone = 1,
-		FovKick = 8,
 		CameraPosition = camera().CFrame.Position,
+		FovKick = 6 + launchPower * 6,
+		SlowMo = 0,
+		HitStop = 0,
+		LastHitStop = 0,
+		LastBigPop = 0,
+		Roll = 0,
 		LaunchId = nil,
-		Done = nil,
+		IdReady = false,
+		BonkTipShown = false,
 	}
 	flight = f
 	state = "Flying"
@@ -740,7 +743,8 @@ startFlight = function(launchPower: number)
 	end)
 
 	UI.SetMode("Flying")
-	UI.SetBoosts(f.Boosts)
+	UI.SetBoosts(run.Boosts)
+	UI.SetAbility(nil)
 	setPlayerListVisible(false)
 	ContextActionService:BindActionAtPriority(
 		BOOST_ACTION,
@@ -757,57 +761,88 @@ startFlight = function(launchPower: number)
 		Enum.KeyCode.ButtonR2
 	)
 	UI.Pop(if launchPower >= 0.99 then "PERFECT!" else "LAUNCH!", "max")
-	Effects.Play("Launch", 0.9)
-	Effects.Shake(1)
+	Effects.Launch(start, velocity.Unit, launchPower)
+	Effects.Play("Launch", 0.85 + launchPower * 0.25, 0.8 + launchPower * 0.4, true)
 	bindStep(FLIGHT_STEP, flightStep)
+end
+
+-- Mid-air Nitro; limited charges per launch (Rocket Fuel adds more).
+boost = function()
+	if run then
+		run:Boost()
+	end
+end
+
+-- A short orbit around the flyer when they reach the finish line.
+local function finishCinematic(position: Vector3)
+	local start = os.clock()
+	local cam = camera()
+	cam.CameraType = Enum.CameraType.Scriptable
+	bindStep(FINISH_STEP, function(_dt)
+		local t = os.clock() - start
+		if t > 2.4 or state ~= "Results" then
+			unbindStep(FINISH_STEP)
+			if state == "Results" then
+				restoreCamera()
+			end
+			return
+		end
+		local angle = t * 1.1
+		local offset = Vector3.new(math.sin(angle) * 22, 9 + t * 2, math.cos(angle) * 22)
+		cam.CFrame = CFrame.lookAt(position + offset, position + Vector3.new(0, 3, 0))
+		cam.FieldOfView = 60
+	end)
+end
+
+local function cleanupFlightVisuals()
+	Effects.EndFlight()
+	Effects.SetWind(0)
+	Effects.HideSpeedLines()
+	UI.SetAbility(nil)
 end
 
 finishFlight = function(reason: string)
 	local f = flight
-	if not f then
+	local r = run
+	if not f or not r then
 		return
 	end
 	flight = nil
+	run = nil
 	unbindStep(FLIGHT_STEP)
 	ContextActionService:UnbindAction(BOOST_ACTION)
 	setPlayerListVisible(true)
 	setPromptsEnabled(true)
-	Effects.SetWind(0)
-	Effects.HideSpeedLines()
+	cleanupFlightVisuals()
 	state = "Results"
 
 	-- Stand back up where we landed.
 	if root and humanoid then
-		local p = Vector3.new(f.Position.X, Config.GroundY + 3.2, f.Position.Z)
+		local p = Vector3.new(r.Position.X, Config.GroundY + 3.2, r.Position.Z)
 		root.AssemblyLinearVelocity = Vector3.zero
 		root.CFrame = CFrame.lookAt(p, p + Config.Forward)
 		setFlyerMode(false)
 		humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
 	end
-	restoreCamera()
 	UI.SetMode("Results")
 	UI.SetCombo(1, 0, false)
 	if reason == "finish" then
 		UI.Pop("🏆 FINISH!", "best")
+		Effects.Play("Victory", 1, 1, true)
+		Effects.Flash(Color3.fromRGB(255, 230, 120), 0.4)
+		finishCinematic(r.Position)
+	else
+		restoreCamera()
 	end
 
-	local distance = math.max(0, -f.Position.Z)
-	local comboMultiplier = Config.ComboMultiplier(f.MaxCombo, stats.MaxComboMult)
+	local report = r:Report()
+	local distance = report.Distance
+	local comboMultiplier = Config.ComboMultiplier(r.MaxCombo, stats.MaxComboMult)
 	task.spawn(function()
 		local waited = 0
 		while not f.IdReady and waited < 5 do
 			waited += task.wait(0.1)
 		end
-		local report = {
-			Distance = distance,
-			Smashes = f.Smashes,
-			Stars = f.Stars,
-			Rings = f.Rings,
-			Gold = f.Gold,
-			TNT = f.TNT,
-			MaxCombo = f.MaxCombo,
-			RunCoins = f.RunCoins,
-		}
 		local ok, result = pcall(function()
 			return FinishLaunchRemote:InvokeServer(f.LaunchId, report)
 		end)
@@ -815,8 +850,8 @@ finishFlight = function(reason: string)
 			result = {
 				Earned = 0,
 				Distance = math.floor(distance),
-				Smashes = f.Smashes,
-				MaxCombo = f.MaxCombo,
+				Smashes = report.Smashes,
+				MaxCombo = report.MaxCombo,
 				NewBest = false,
 				Failed = true,
 			}
@@ -837,16 +872,24 @@ finishFlight = function(reason: string)
 	end)
 end
 
-returnToLobby = function()
-	state = "Lobby"
+local function resetToLobbyState()
 	flight = nil
+	run = nil
 	unbindStep(FLIGHT_STEP)
+	unbindStep(FINISH_STEP)
 	unbindAiming()
+	recoil = nil
+	unbindStep(BAND_STEP)
+	setBandsVisible(false)
 	ContextActionService:UnbindAction(BOOST_ACTION)
 	setPlayerListVisible(true)
 	setPromptsEnabled(true)
-	Effects.SetWind(0)
-	Effects.HideSpeedLines()
+	cleanupFlightVisuals()
+end
+
+returnToLobby = function()
+	resetToLobbyState()
+	state = "Lobby"
 	setFlyerMode(false)
 	if root then
 		root.AssemblyLinearVelocity = Vector3.zero
@@ -860,35 +903,26 @@ end
 -- Character lifecycle
 --------------------------------------------------------------------------------
 
-local function resetToLobbyState()
-	flight = nil
-	unbindStep(FLIGHT_STEP)
-	unbindAiming()
-	ContextActionService:UnbindAction(BOOST_ACTION)
-	setPlayerListVisible(true)
-	setPromptsEnabled(true)
-	Effects.SetWind(0)
-	Effects.HideSpeedLines()
-	table.clear(savedGroups)
-	state = "Lobby"
-	UI.SetMode("Lobby")
-end
-
 local function onCharacterAdded(newCharacter: Model)
 	character = newCharacter
 	humanoid = newCharacter:WaitForChild("Humanoid", 10) :: Humanoid?
 	root = newCharacter:WaitForChild("HumanoidRootPart", 10) :: BasePart?
 	resetToLobbyState()
+	table.clear(savedGroups)
+	state = "Lobby"
+	UI.SetMode("Lobby")
 	restoreCamera()
 	if humanoid then
 		humanoid.Died:Connect(function()
 			if character == newCharacter then
 				resetToLobbyState()
+				table.clear(savedGroups)
+				state = "Lobby"
+				UI.SetMode("Lobby")
 			end
 		end)
 	end
 end
-
 
 --------------------------------------------------------------------------------
 -- Data + UI wiring
@@ -900,6 +934,8 @@ local function applyData(newData)
 	end
 	data = newData
 	stats = Config.ComputeStats(newData.Upgrades, newData.Rebirths)
+	predictedKey = "" -- upgrades change the arc
+	Quality.Apply(newData.Settings)
 	UI.SetData(newData)
 	Effects.ApplySettings(newData.Settings)
 end
@@ -919,6 +955,7 @@ local function invoke(remoteName: string, ...): (boolean, any)
 	return success == true, message
 end
 
+Quality.Apply(nil)
 Effects.Init(playerGui)
 UI.Init(playerGui, {
 	Launch = function()
@@ -934,7 +971,7 @@ UI.Init(playerGui, {
 		returnToLobby()
 	end,
 	Click = function()
-		Effects.Play("Click", 1.2)
+		Effects.Play("Click", 1)
 	end,
 	BuyUpgrade = function(nodeId: string)
 		local node = Config.NodesById[nodeId]
@@ -1013,6 +1050,7 @@ UI.Init(playerGui, {
 			return
 		end
 		data.Settings[key] = value
+		Quality.Apply(data.Settings)
 		Effects.ApplySettings(data.Settings)
 		UI.SetData(data)
 		UpdateSettingRemote:FireServer(key, value)
@@ -1047,11 +1085,14 @@ task.spawn(function()
 	end
 end)
 
--- Keep tidying smashed blocks while not flying (the flight loop does it otherwise).
-RunService.Heartbeat:Connect(function()
-	if not flight then
-		course:Update(nil)
+-- While not flying: keep the course, hazards and biome atmosphere around the player.
+RunService.Heartbeat:Connect(function(dt)
+	if flight then
+		return
 	end
+	local focus = if root then root.Position else Config.LobbySpawn
+	course:Update(dt, focus, os.clock())
+	Atmosphere.Update(math.max(0, -focus.Z), camera().CFrame)
 end)
 
 player.CharacterAdded:Connect(onCharacterAdded)

@@ -40,6 +40,8 @@ PhysicsService:CollisionGroupSetCollidable("Flyer", "Players", false)
 PhysicsService:CollisionGroupSetCollidable("Flyer", "Flyer", false)
 PhysicsService:CollisionGroupSetCollidable("Flyer", "Debris", false)
 PhysicsService:CollisionGroupSetCollidable("Debris", "Players", false)
+-- Flung blocks don't collide with each other: far fewer contacts in big chains.
+PhysicsService:CollisionGroupSetCollidable("Debris", "Debris", false)
 
 --------------------------------------------------------------------------------
 -- Remotes
@@ -81,7 +83,7 @@ Leaderboard.Init(map, function(player)
 end)
 
 local layout = CourseLayout.Get()
-local layoutKinds = { Block = 0, Gold = 0, TNT = 0 }
+local layoutKinds = { Block = 0, Ice = 0, Gold = 0, TNT = 0, Armor = 0 }
 for _, block in layout.Blocks do
 	layoutKinds[block.Kind] = (layoutKinds[block.Kind] or 0) + 1
 end
@@ -275,22 +277,18 @@ FinishLaunch.OnServerInvoke = function(player, launchId, report)
 	local stats = Config.ComputeStats(data.Upgrades, data.Rebirths)
 
 	-- Clamp every reported number to what is physically possible.
-	local maxDistance = math.min(Config.LaneLength + 20, elapsed * stats.LaunchSpeed * 2.5 + 40)
-	local distance = math.clamp(safeNumber(report.Distance), 0, maxDistance)
-	-- TNT chains can smash dozens at once, but never hundreds per second.
-	local maxSmashes = math.min(layout.TotalBlocks, math.floor(60 + elapsed * 30))
-	local smashes = math.clamp(math.floor(safeNumber(report.Smashes)), 0, maxSmashes)
+	local limits = Config.LaunchLimits(stats, elapsed, layout.TotalBlocks)
+	local distance = math.clamp(safeNumber(report.Distance), 0, limits.MaxDistance)
+	local smashes = math.clamp(math.floor(safeNumber(report.Smashes)), 0, limits.MaxSmashes)
 	local stars = math.clamp(math.floor(safeNumber(report.Stars)), 0, #layout.Stars)
 	local rings = math.clamp(math.floor(safeNumber(report.Rings)), 0, #layout.Rings)
 	local gold = math.clamp(math.floor(safeNumber(report.Gold)), 0, math.min(smashes, layoutKinds.Gold))
 	local tnt = math.clamp(math.floor(safeNumber(report.TNT)), 0, math.min(smashes, layoutKinds.TNT))
+	local armor = math.clamp(math.floor(safeNumber(report.Armor)), 0, math.min(smashes, layoutKinds.Armor))
+	local powerups = math.clamp(math.floor(safeNumber(report.Powerups)), 0, #layout.Pickups)
 	local maxCombo = math.clamp(math.floor(safeNumber(report.MaxCombo)), 0, smashes)
 
-	local maxZoneMult = Config.Zones[#Config.Zones].ValueMult
-	local ceiling = (
-		smashes * Config.MaxBlockValue() * stats.SmashCoinMult * stats.MaxComboMult * Config.CritMultiplier
-		+ stars * Config.StarValue * maxZoneMult
-	) * stats.CoinMult
+	local ceiling = Config.CoinCeiling(stats, smashes, stars)
 	local runCoins = math.clamp(math.floor(safeNumber(report.RunCoins)), 0, math.floor(ceiling))
 	local distanceCoins = math.floor(distance * Config.CoinsPerStud * stats.CoinMult)
 	local earned = runCoins + distanceCoins
@@ -305,6 +303,8 @@ FinishLaunch.OnServerInvoke = function(player, launchId, report)
 		Rings = rings,
 		Gold = gold,
 		TNT = tnt,
+		Armor = armor,
+		Powerups = powerups,
 		MaxCombo = maxCombo,
 	}
 	for _, entry in Index.Evaluate(summary, data.Index) do
@@ -474,4 +474,14 @@ UpdateSetting.OnServerEvent:Connect(function(player, key, value)
 	data.Settings[key] = value
 end)
 
-print("[SlingSmash] Server ready -", layout.TotalBlocks, "blocks,", #layout.Stars, "stars,", #layout.Rings, "boost rings")
+print(
+	"[SlingSmash] Server ready -",
+	layout.TotalBlocks,
+	"blocks,",
+	#layout.Stars,
+	"stars,",
+	#layout.Rings,
+	"rings,",
+	#layout.Pickups,
+	"power-ups"
+)

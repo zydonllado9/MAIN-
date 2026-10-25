@@ -20,6 +20,8 @@ SRC = HERE.parent / "src"
 MODULES = [
     ("shared", "Config"),
     ("shared", "CourseLayout"),
+    ("shared", "Physics"),
+    ("shared", "RunSim"),
     ("shared", "Format"),
     ("shared", "Index"),
     ("shared", "Daily"),
